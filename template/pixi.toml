@@ -1,0 +1,27 @@
+[workspace]
+name = "paper-explainer"
+version = "0.1.0"
+description = "Interactive visual guide to a research paper"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tasks]
+serve = "mkdocs serve"
+build = "mkdocs build"
+probe = "python scripts/probe_pdf.py"
+extract-figures = "python scripts/extract_figures.py"
+verify-figures = "python scripts/extract_figures.py --verify"
+check-refs = "python scripts/extract_figures.py --check-refs"
+check-site = "python scripts/check_site.py"
+
+[dependencies]
+python = ">=3.11"
+mkdocs = ">=1.5"
+mkdocs-material = ">=9.0"
+pymupdf = ">=1.23"
+pillow = ">=10.0"
+numpy = ">=1.26"
+matplotlib = ">=3.8"
+
+[pypi-dependencies]
+playwright = ">=1.62.0, <2"

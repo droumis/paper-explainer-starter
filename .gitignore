@@ -1,0 +1,12 @@
+# instantiated project files (template/ is the source of truth)
+/docs/
+/scripts/
+/mkdocs.yml
+/pixi.toml
+/pixi.lock
+/.pixi/
+/site/
+/screenshots/
+*.pdf
+__pycache__/
+.DS_Store

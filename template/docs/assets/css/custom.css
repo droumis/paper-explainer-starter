@@ -1,0 +1,45 @@
+/* Distill-inspired layout overrides for mkdocs-material */
+
+:root {
+  --d-fg: #1a1a1a;
+  --d-muted: #555;
+  --d-accent: #4361ee;
+  --d-accent2: #e63946;
+  --d-bg-card: #fff;
+  --d-border: #e0e0e0;
+  --d-code-bg: #f5f5f5;
+  --d-green: #2a9d8f;
+  --d-orange: #e76f51;
+  --d-purple: #7b2cbf;
+}
+
+.md-content {
+  max-width: 820px;
+  margin: 0 auto;
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+
+.md-content h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 0.3em;
+}
+
+.md-content h2 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-top: 2.5em;
+  padding-top: 1em;
+  border-top: 1px solid var(--d-border);
+}
+
+.md-content h2:first-of-type {
+  border-top: none;
+  margin-top: 1em;
+}
+
+.md-content p {
+  margin-bottom: 1.1em;
+  color: var(--d-fg);
+}

@@ -1,0 +1,249 @@
+/* Interactive visualization containers */
+
+.vis-container {
+  background: var(--d-bg-card);
+  border: 1px solid var(--d-border);
+  border-radius: 8px;
+  padding: 24px;
+  margin: 28px 0;
+  overflow: hidden;
+}
+
+.vis-container svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.vis-controls {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.vis-controls label {
+  font-size: 0.88em;
+  color: var(--d-muted);
+}
+
+.vis-controls input[type="range"] {
+  width: 160px;
+  cursor: pointer;
+}
+
+.vis-controls button {
+  padding: 5px 14px;
+  border: 1px solid var(--d-border);
+  border-radius: 4px;
+  background: var(--d-bg-card);
+  cursor: pointer;
+  font-size: 0.88em;
+  transition: background 0.15s, color 0.15s;
+}
+
+.vis-controls button:hover {
+  background: var(--d-accent);
+  color: white;
+  border-color: var(--d-accent);
+}
+
+.vis-controls .value {
+  font-weight: 600;
+  min-width: 30px;
+  text-align: center;
+  font-size: 0.9em;
+}
+
+.vis-controls select {
+  padding: 4px 8px;
+  border: 1px solid var(--d-border);
+  border-radius: 4px;
+  background: var(--d-bg-card);
+  font-size: 0.88em;
+  cursor: pointer;
+}
+
+.vis-controls button[disabled] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.vis-controls button[disabled]:hover {
+  background: var(--d-bg-card);
+  color: inherit;
+  border-color: var(--d-border);
+}
+
+/* Live status line under a diagram, written by the diagram itself */
+.vis-caption {
+  margin-top: 10px;
+  font-size: 0.85em;
+  color: var(--d-muted);
+  line-height: 1.5;
+  min-height: 1.2em;
+}
+
+/* Margin notes (Distill-style) */
+.margin-note {
+  float: right;
+  clear: right;
+  margin-right: -220px;
+  width: 200px;
+  font-size: 0.82em;
+  color: var(--d-muted);
+  line-height: 1.5;
+  padding-left: 12px;
+  border-left: 2px solid var(--d-border);
+}
+
+@media (max-width: 1200px) {
+  .margin-note {
+    float: none;
+    margin: 12px 0;
+    width: 100%;
+    padding: 10px 14px;
+    background: #f8f9fa;
+    border-left: 3px solid var(--d-accent);
+    border-radius: 0 4px 4px 0;
+  }
+}
+
+/* Key insight callout */
+.insight {
+  background: #eef2ff;
+  border-left: 4px solid var(--d-accent);
+  padding: 14px 18px;
+  margin: 20px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+
+/* Analogy callout */
+.analogy {
+  background: #fff8e1;
+  border-left: 4px solid #f9a825;
+  padding: 14px 18px;
+  margin: 20px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+
+/* Figure with caption */
+.figure {
+  margin: 32px 0;
+  text-align: center;
+}
+
+.figure img {
+  max-width: 100%;
+  border-radius: 4px;
+  border: 1px solid var(--d-border);
+}
+
+.figure .caption {
+  font-size: 0.85em;
+  color: var(--d-muted);
+  margin-top: 8px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+/* Step indicators */
+.step-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--d-accent);
+  color: white;
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+/* Formula display */
+.formula-block {
+  text-align: center;
+  font-size: 1.05em;
+  margin: 24px 0;
+  padding: 18px 20px;
+  background: var(--d-code-bg);
+  border-radius: 6px;
+}
+
+.formula-block .explain {
+  display: block;
+  font-size: 0.82em;
+  color: var(--d-muted);
+  margin-top: 8px;
+}
+
+/* Interactive equation breakdown */
+.formula-interactive {
+  text-align: center;
+  font-size: 1.4em;
+  padding: 16px 0;
+  font-family: 'KaTeX_Math', 'Times New Roman', serif;
+  user-select: none;
+}
+
+.formula-interactive .formula-part {
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.formula-interactive .formula-part[data-part="lambda"] {
+  color: #7b2cbf;
+  font-weight: 600;
+}
+.formula-interactive .formula-part[data-part="log"] {
+  color: #555;
+}
+.formula-interactive .formula-part[data-part="beta0"] {
+  color: #e67e22;
+  font-weight: 600;
+}
+.formula-interactive .formula-part[data-part="beta-x"] {
+  color: #2a9d8f;
+  font-weight: 600;
+}
+.formula-interactive .formula-part:hover,
+.formula-interactive .formula-part.active {
+  background: #f0f0f0;
+  box-shadow: 0 0 0 2px currentColor;
+}
+.formula-interactive .formula-op {
+  color: #888;
+  padding: 0 4px;
+}
+
+.formula-explain {
+  font-size: 0.9em;
+  color: var(--d-muted);
+  min-height: 2.4em;
+  padding: 8px 12px;
+  margin-top: 8px;
+  border-left: 3px solid var(--d-border);
+  transition: border-color 0.2s;
+}
+
+.formula-explain.active {
+  border-left-color: var(--d-accent);
+  color: var(--d-text);
+}
+
+/* Neuron diagram colors */
+.neuron-exc { fill: var(--d-accent2); }
+.neuron-inh { fill: var(--d-accent); }
+.neuron-ca1 { fill: var(--d-green); }
+.region-hpc { fill: #e8f5e9; stroke: var(--d-green); }
+.region-pfc { fill: #ede7f6; stroke: var(--d-purple); }

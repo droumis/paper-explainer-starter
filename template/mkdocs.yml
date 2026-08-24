@@ -1,0 +1,51 @@
+# Fill in site_name and site_description from PAPER.md, then extend nav as
+# pages are written. Everything else is deliberately fixed: these extensions
+# are what the diagrams, equations, admonitions and disclosures rely on.
+site_name: "TITLE OF THE SITE"
+site_description: "A visual guide to AUTHOR et al. YEAR: one line on what it showed"
+site_url: ""
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: indigo
+    accent: deep purple
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.sections
+    - navigation.top
+    - toc.integrate
+
+extra_css:
+  - assets/css/custom.css
+  - assets/css/distill.css
+
+extra_javascript:
+  - https://d3js.org/d3.v7.min.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - assets/js/lib/stats.js      # must load before diagrams.js
+  - assets/js/diagrams.js
+
+nav:
+  - Home: index.md
+  # - Background: background.md
+  # - The Experiment: experiment.md
+  # - Results: results.md
+  # - Putting It Together: synthesis.md
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition          # !!! note callouts
+  - pymdownx.superfences
+  - pymdownx.arithmatex: # LaTeX via MathJax
+      generic: true
+  - pymdownx.details    # ??? collapsible blocks for optional depth
+  - footnotes
+  - tables
+
+plugins:
+  - search
