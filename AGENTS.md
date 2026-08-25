@@ -53,6 +53,12 @@ setting a box to a whole page and watching all three complain.
 Write the nav in `mkdocs.yml` and a one-line purpose for each page. Check the
 plan against `PAPER.md`'s emphasise and skip lists before writing prose.
 
+If the pipeline page is on, settle its endpoint here. Use `PAPER.md`'s
+**Pipeline target** if it names one; if it is blank, pick the paper's central
+multi-stage result, and tell the user which figure or panel you chose before
+building the page. Every stage on the page has to be on the path to that
+endpoint.
+
 ### 4. Write pages one at a time
 
 For each page: prose first, then the figures it needs, then the diagrams. Keep
@@ -115,6 +121,7 @@ Repeated from `PAPER.md` because they are the ones most often broken:
 Follow the no-ai-slop rules. In particular, for this project type:
 
 - **Em dashes: use none.** Commas, colons, periods, parentheses instead.
+- No mid-sentence colons.
 - No "not just X but Y" contrasts. State Y.
 - No reader guidance: "note that", "the key point is", "it's worth noting".
 - No schematic sitting next to the real figure it schematises. Delete it and

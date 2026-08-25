@@ -275,13 +275,19 @@ Method pages still run longer than the ~800-word guideline for narrative pages. 
 
 A method page can explain a technique correctly and still leave the reader unable to say how the paper's figure was produced. The common failure is **two disconnected islands**: a synthetic toy that begins from an already-assembled data matrix, and the published figure shown as a finished artifact. Nothing carries data across the middle.
 
+### Name the endpoint before building any stage
+
+The page needs one destination: a specific figure panel or result it reconstructs. `PAPER.md`'s **Pipeline target** field is where the user names it. Honour it literally, including which panels of a multi-panel figure are in scope. When it is blank, choose the paper's central multi-stage result yourself and tell the user which one before writing the page, because this choice determines every stage that follows.
+
+The endpoint is the scoping tool for this page, which otherwise grows without limit. Once it is fixed, each candidate stage gets one question: does the endpoint depend on it? Preprocessing the target panel never touches, and analyses branching off elsewhere in the paper, get a sentence and a link rather than a diagram. A stage the endpoint needs but that is dull to depict still has to appear, at least as a stated array shape, otherwise the chain has a hole.
+
 Audit the chain explicitly, stage by stage, and look for the joints nobody depicts:
 
 - **Raw measurement → the numbers in the array.** This is the most-skipped stage and usually the most valuable. For spike data it is "align to each event, count within a window." Show a raster with a draggable analysis window, tally the spikes inside it, and have those integers visibly become one row of the matrix. Grey out what falls outside the window so the reader sees what the analysis discards.
 - **Array shapes, stated.** Give the dimensions of every array and say what one row is. Also say the *scoping*: if the model is fit per session and per target neuron, say so, because a reader told the dataset has 536 and 312 neurons will otherwise assume one enormous fit. Scoping is what makes the paper's ensemble sizes intelligible.
 - **The repetition that builds the figure.** A striking network diagram is often just one fit repeated per target neuron, with the coefficient vectors drawn as edges. If you show one fit and then the network, state that the network *is* the stacked fits — otherwise it looks like a separate analysis.
 - **The sweep that builds the summary panel.** Bar charts of performance versus some parameter are a loop around the whole pipeline. Once the estimator runs in the browser, compute these rather than drawing them.
-- **A closing diagram of the whole chain.** A short ASCII or SVG flow from raw data to each figure panel gives the reader somewhere to orient.
+- **A closing diagram of the whole chain.** A short ASCII or SVG flow from raw data to the target panel gives the reader somewhere to orient.
 
 Then place the reconstruction beside the real panel, and add an explicit **"where this simplification departs from the paper"** list: scale, number of resampling repeats, how significance is approximated, and the fact that ground truth exists only because you generated it.
 

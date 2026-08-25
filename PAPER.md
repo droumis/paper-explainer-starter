@@ -79,6 +79,14 @@ results, synthesis. Override if the paper wants a different shape.
   reconstructions of the paper's figure panels. Worth it when the paper's
   central result comes from a multi-stage analysis.
 
+- **Pipeline target**:
+  Which figure, panel, or result the pipeline should end at, e.g. `Fig 4c` or
+  `the coupling network in Fig 3, panels a and b`. Everything on the page is
+  then chosen to reach that endpoint, and stages the endpoint does not need are
+  summarised in a sentence rather than built. Leave blank and the agent picks
+  the paper's central multi-stage result and says which one it picked before
+  building the page.
+
 ## Constraints
 
 - **Tone**:
