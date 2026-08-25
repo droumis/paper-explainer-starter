@@ -108,7 +108,9 @@ wrong site gets rebuilt. `pixi run papers` lists them with their state.
 Each paper directory holds its own PDF, `PAPER.md`, `figures.toml`, `mkdocs.yml`
 and `docs/`, and builds its own independent site. `pixi run sync-assets` pushes a
 shared CSS or `stats.js` improvement from `template/` into papers that already
-exist, leaving each paper's `diagrams.js` alone.
+exist, leaving each paper's `diagrams.js` alone. A shared file that a paper has
+edited is reported and skipped rather than overwritten, since that edit is
+usually a lesson that belongs upstream.
 
 ## What you get
 
@@ -164,8 +166,14 @@ the parameters it generated its own data from.
 ```bash
 node tests/test_stats.cjs                                       # 39 checks
 pixi run --manifest-path template/pixi.toml \
-  python tests/test_pdf_geometry.py                             # 21 checks
+  python tests/test_pdf_geometry.py                             # 44 checks
+pixi run --manifest-path template/pixi.toml \
+  python tests/test_papers.py                                   # 11 checks
 ```
+
+`tests/test_papers.py` covers scaffolding and asset syncing, and its central case
+is a paper that improves a shared file: syncing must leave that copy alone and say
+so, because the improvement is what belongs upstream and losing it is silent.
 
 `tests/test_pdf_geometry.py` fabricates a synthetic journal page containing the
 three things that make naive PDF geometry wrong, so it needs no real paper:

@@ -124,7 +124,8 @@ declaring done rather than discovering them in CI.
 
 If you change the shipped machinery in `scripts/` or
 `docs/assets/js/lib/stats.js`, the starter repo's own tests cover it:
-`tests/test_pdf_geometry.py` and `tests/test_stats.cjs`. Fixes that are not
+`tests/test_pdf_geometry.py`, `tests/test_papers.py` and `tests/test_stats.cjs`.
+Fixes that are not
 paper-specific belong upstream in the starter, with a test.
 
 ## Rules that are not negotiable

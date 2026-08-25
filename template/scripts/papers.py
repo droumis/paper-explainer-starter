@@ -25,6 +25,8 @@ symlinked directories, so a symlinked asset tree silently ships nothing.
 exist. It never touches `diagrams.js`, which is per paper.
 """
 
+import hashlib
+import json
 import os
 import shutil
 import sys
@@ -51,6 +53,10 @@ else:
 
 # Paper-agnostic files that template/ owns and every project only borrows.
 SHARED_ASSETS = ("docs/assets/css", "docs/assets/js/lib")
+# Records the template content last written into a paper, so a local improvement
+# to a shared file is never mistaken for a stale copy and overwritten. A dotfile,
+# which mkdocs leaves out of the built site.
+SYNC_RECORD = "docs/assets/.synced.json"
 
 
 def require_template():
@@ -232,6 +238,13 @@ def cmd_new(args):
     brief = ROOT / "PAPER.md"
     if brief.exists():
         shutil.copy2(brief, dest / "PAPER.md")
+    # Record the shared assets just written, so a later sync can tell a pristine
+    # copy from one this paper improved.
+    write_record(dest, {
+        f"{rel}/{f.name}": digest(f)
+        for rel in SHARED_ASSETS if (TEMPLATE / rel).is_dir()
+        for f in (TEMPLATE / rel).iterdir() if f.is_file()
+    })
 
     print(f"scaffolded {name}/")
     for f in sorted(p.relative_to(dest) for p in dest.rglob("*") if p.is_file()):
@@ -251,23 +264,84 @@ def leading_name(args):
     return None, list(args)
 
 
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def read_record(project: Path) -> dict:
+    path = project / SYNC_RECORD
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def write_record(project: Path, record: dict):
+    path = project / SYNC_RECORD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def sync_project(project: Path, force: bool = False) -> list[str]:
+    """Copy the shared assets into one paper, keeping its own edits.
+
+    A paper may improve a shared file, and that improvement belongs upstream, not
+    in the bin. The record says which template content was last written here, so a
+    destination matching it is a pristine older copy and safe to replace, while
+    anything else was edited locally and is left alone with a warning.
+    """
+    record = read_record(project)
+    skipped = []
+    for rel in SHARED_ASSETS:
+        src_dir = TEMPLATE / rel
+        if not src_dir.is_dir():
+            continue
+        (project / rel).mkdir(parents=True, exist_ok=True)
+        for src in sorted(src_dir.iterdir()):
+            if not src.is_file():
+                continue
+            key = f"{rel}/{src.name}"
+            dest = project / rel / src.name
+            src_hash = digest(src)
+            if dest.exists():
+                dest_hash = digest(dest)
+                if dest_hash == src_hash:
+                    record[key] = src_hash
+                    continue
+                if not force and record.get(key) not in (None, dest_hash):
+                    skipped.append(f"{project.name}/{key}")
+                    continue
+                if not force and key not in record:
+                    # No record at all: this paper predates the record, so its
+                    # copy cannot be told apart from a local improvement.
+                    skipped.append(f"{project.name}/{key}")
+                    continue
+            shutil.copy2(src, dest)
+            record[key] = src_hash
+            print(f"  {project.name}/{key}")
+    write_record(project, record)
+    return skipped
+
+
 def cmd_sync_assets(args):
     require_template()
-    name, _ = leading_name(args)
+    force = "--force" in args
+    name, _ = leading_name([a for a in args if a != "--force"])
     targets = [resolve_project(name)] if name else candidate_projects(Path.cwd())
     if not targets:
         raise SystemExit("No paper projects here.")
+    skipped = []
     for project in targets:
-        for rel in SHARED_ASSETS:
-            src, dst = TEMPLATE / rel, project / rel
-            if not src.is_dir():
-                continue
-            dst.mkdir(parents=True, exist_ok=True)
-            for f in sorted(src.iterdir()):
-                if f.is_file():
-                    shutil.copy2(f, dst / f.name)
-                    print(f"  {project.name}/{rel}/{f.name}")
+        skipped += sync_project(project, force=force)
     print("Shared assets synced. diagrams.js is per paper and was not touched.")
+    if skipped:
+        print("\nLeft alone because they differ from what was last synced here:")
+        for s in skipped:
+            print(f"  {s}")
+        print("Reconcile by hand, ideally by sending the improvement upstream. "
+              "`--force` overwrites.")
 
 
 def cmd_mkdocs(verb, args):

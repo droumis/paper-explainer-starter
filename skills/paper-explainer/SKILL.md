@@ -80,7 +80,9 @@ you: what to crop, what to plot, how much depth to give, and how to write it.
 A repo holding several papers keeps `pixi.toml` and `scripts/` at the root and
 gives each paper its own directory containing everything from `mkdocs.yml`
 downwards. `pixi run new-paper <name>` scaffolds one, and `pixi run sync-assets`
-pushes a shared CSS or `stats.js` fix into papers that already exist.
+pushes a shared CSS or `stats.js` fix into papers that already exist. If it
+reports a file as skipped, that paper edited a shared file: send the improvement
+upstream to `template/` rather than forcing the copy.
 
 ## pixi.toml dependencies
 

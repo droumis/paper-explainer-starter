@@ -40,6 +40,9 @@ jobs:
       - name: Figure geometry tests
         run: pixi run --manifest-path template/pixi.toml python tests/test_pdf_geometry.py
 
+      - name: Scaffolding and asset sync tests
+        run: pixi run --manifest-path template/pixi.toml python tests/test_papers.py
+
       # The starter's whole promise is that `init` gives a working project, so
       # instantiate it exactly as the README says and build.
       - name: Template instantiates and builds clean
