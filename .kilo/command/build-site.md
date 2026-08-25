@@ -9,8 +9,9 @@ Work out which layout this repo uses before running anything. One paper per repo
 means `mkdocs.yml` is at the root and commands need no project name. Several
 papers means one directory each, and every command takes that directory:
 `pixi run probe <paper> --suggest`. If `$ARGUMENTS` names a paper directory, work
-on that one and read its own `PAPER.md`; if it names one that does not exist yet,
-create it with `pixi run new-paper <paper>` first.
+on that one and read its own `PAPER.md`. If that directory does not exist yet, or
+exists holding only the PDF, scaffold it with `pixi run new-paper <paper>` first,
+which is the normal way to start.
 
 Where `PAPER.md` is blank, do not hand the empty form back to me. Read the PDF
 first, draft the fields the paper can settle, and ask me about the ones it
