@@ -13,6 +13,7 @@ extract-figures = "python scripts/extract_figures.py"
 verify-figures = "python scripts/extract_figures.py --verify"
 check-refs = "python scripts/extract_figures.py --check-refs"
 check-site = "python scripts/check_site.py"
+playwright = "playwright"
 
 [dependencies]
 python = ">=3.11"

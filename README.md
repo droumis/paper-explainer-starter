@@ -66,6 +66,47 @@ per-iteration trace, and repeated-split cross-validation against a shuffled
 baseline. It exists so a diagram can do real estimation rather than revealing
 the parameters it generated its own data from.
 
+## Tests and CI
+
+```bash
+node tests/test_stats.cjs                                       # 39 checks
+pixi run --manifest-path template/pixi.toml \
+  python tests/test_pdf_geometry.py                             # 21 checks
+```
+
+`tests/test_pdf_geometry.py` fabricates a synthetic journal page containing the
+three things that make naive PDF geometry wrong, so it needs no real paper:
+
+- a path whose fill reaches into the text column but is **clipped** to the figure
+- a **two-column layout** where the body text is indented around the figure
+- **zero-thickness** axis lines and tick marks
+
+It then asserts that a box produced by `suggest_crop` passes all three crop
+checks, and that boxes which swallow prose, clip content, strand content between
+crops, or omit a panel label are each rejected.
+
+`tests/test_stats.cjs` checks the statistics: that the RNG is reproducible and
+uniform, that Poisson samples have variance equal to their mean, that the solver
+pivots and reports singular matrices, that the GLM recovers known coefficients
+and refuses underdetermined fits, that `w = mu` and `z = eta + (y-mu)/mu` hold in
+the trace, and that estimation error falls as 1/sqrt(n).
+
+It deliberately does **not** assert that the log-likelihood rises every pass. An
+undamped Newton step can overshoot from a cold start, so it sometimes dips. A
+site claiming the score "rose" each pass is wrong a few percent of the time.
+
+### Two workflows
+
+`.github/workflows/ci.yml` covers this repo: syntax, both test suites, and a
+proof that `cp -r template/* .` yields a project that builds with no warnings.
+It also fails if the template ever ships paper-specific state such as filled-in
+crop boxes or a committed PDF.
+
+`template/.github/workflows/ci.yml` is copied into each paper project. It checks
+syntax, the prose conventions (no em dashes, no "not just X but Y"), the figure
+crops and their references, a warning-free build, and then drives the built site
+in a real browser.
+
 ## Requirements
 
 [pixi](https://pixi.sh). Everything else is declared in `template/pixi.toml`.

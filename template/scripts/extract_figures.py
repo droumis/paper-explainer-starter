@@ -173,6 +173,13 @@ CHECKS = (verify_crops, verify_coverage, verify_panel_labels)
 
 
 def verify_all():
+    # An empty FIGURES makes every check vacuously true, so `--verify` would
+    # report success on a project where no figures have been defined yet. In CI
+    # that is a green build on unfinished work, so treat it as a failure.
+    if not FIGURES:
+        print("FAILED: FIGURES is empty, so there is nothing to verify.")
+        print("  Run `pixi run probe --suggest` to get candidate crop boxes.")
+        return False
     # A list, not a generator, so every check runs and reports rather than
     # short-circuiting at the first failure.
     return all([check() for check in CHECKS])

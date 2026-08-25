@@ -82,6 +82,18 @@ Run an accuracy pass over every claim against the PDF, and a writing pass
 against the no-ai-slop rules. `/audit-accuracy` fans this out across
 sub-agents. Do this before declaring done, not after the user asks.
 
+### 8. Keep CI green
+
+`template/.github/workflows/ci.yml` was copied in with the rest of the template.
+It checks the prose conventions, the figure crops and their references, a
+warning-free build, and the site in a browser. Run those checks locally before
+declaring done rather than discovering them in CI.
+
+If you change the shipped machinery in `scripts/` or
+`docs/assets/js/lib/stats.js`, the starter repo's own tests cover it:
+`tests/test_pdf_geometry.py` and `tests/test_stats.cjs`. Fixes that are not
+paper-specific belong upstream in the starter, with a test.
+
 ## Rules that are not negotiable
 
 Repeated from `PAPER.md` because they are the ones most often broken:

@@ -1,0 +1,86 @@
+# CI for the starter itself: prove the template is valid and the shipped
+# machinery is correct. There is no paper here, so this cannot check crops.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  machinery:
+    name: Tests and template instantiation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          manifest-path: template/pixi.toml
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: JavaScript syntax
+        run: |
+          for f in template/docs/assets/js/*.js template/docs/assets/js/lib/*.js; do
+            node --check "$f"
+          done
+
+      - name: stats.js tests
+        run: node tests/test_stats.cjs
+
+      - name: Python syntax
+        run: |
+          for f in template/scripts/*.py tests/*.py; do
+            python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"
+          done
+
+      - name: Figure geometry tests
+        run: pixi run --manifest-path template/pixi.toml python tests/test_pdf_geometry.py
+
+      # The starter's whole promise is that `cp -r template/* .` gives a working
+      # project, so instantiate it exactly as the README says and build.
+      - name: Template instantiates and builds clean
+        run: |
+          work=$(mktemp -d)
+          cp -r template/* "$work"/
+          cd "$work"
+          pixi install
+          pixi run build 2>&1 | tee build.log
+          if grep -q WARNING build.log; then
+            echo "::error::A fresh project must build with no warnings"
+            grep WARNING build.log
+            exit 1
+          fi
+
+      - name: A fresh project refuses to verify empty FIGURES
+        run: |
+          work=$(mktemp -d)
+          cp -r template/* "$work"/
+          cd "$work"
+          # No PDF present: the tooling must say so rather than crash obscurely.
+          if pixi run probe 2>&1 | grep -q "No PDF found"; then
+            echo "probe reports a missing PDF correctly"
+          else
+            echo "::error::probe should report a missing PDF"
+            exit 1
+          fi
+
+      - name: Template ships no paper-specific state
+        run: |
+          # FIGURES must be empty, or every new project starts with someone
+          # else's crop boxes.
+          if grep -qE '^\s+"fig[0-9a-z_]+":' template/scripts/extract_figures.py; then
+            echo "::error::template/scripts/extract_figures.py has FIGURES filled in"
+            exit 1
+          fi
+          if ls template/docs/assets/img/figures/*.png >/dev/null 2>&1; then
+            echo "::error::extracted figures committed to the template"
+            exit 1
+          fi
+          if ls *.pdf >/dev/null 2>&1; then
+            echo "::error::a paper PDF is committed to the starter"
+            exit 1
+          fi

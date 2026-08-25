@@ -1,0 +1,80 @@
+# CI for a paper explainer project. Copied in with the rest of the template.
+#
+# Every step here corresponds to something that has shipped broken: a caption
+# describing panels the crop cut off, a figure file nothing referenced, a
+# diagram whose scale went NaN, a page with a silent console error.
+#
+# The paper PDF is usually not redistributable, so figure steps run only when a
+# PDF is present. Commit-free CI still checks syntax, the build, and the site.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0
+        with:
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: JavaScript syntax
+        run: |
+          for f in docs/assets/js/*.js docs/assets/js/lib/*.js; do
+            [ -e "$f" ] && node --check "$f"
+          done
+
+      - name: Python syntax
+        run: |
+          for f in scripts/*.py; do
+            python -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"
+          done
+
+      - name: Prose conventions
+        run: |
+          # Em dashes are held at zero. Commas, colons, periods, parentheses.
+          if grep -rn "—" docs/*.md; then
+            echo "::error::em dashes found; use commas, colons, periods or parentheses"
+            exit 1
+          fi
+          # "not just X but Y" states the contrast instead of the point.
+          if grep -rniE "not just .{1,40} but " docs/*.md; then
+            echo "::error::binary contrast found; state the positive claim directly"
+            exit 1
+          fi
+
+      - name: Figure crops verify
+        run: |
+          if ls *.pdf >/dev/null 2>&1; then
+            pixi run verify-figures
+            pixi run check-refs
+          else
+            echo "No PDF in the repo, skipping figure checks."
+          fi
+
+      - name: Build
+        run: |
+          pixi run build 2>&1 | tee build.log
+          if grep -q WARNING build.log; then
+            echo "::error::build emitted warnings"
+            grep WARNING build.log
+            exit 1
+          fi
+
+      - name: Browser check
+        run: |
+          pixi run playwright install --with-deps chromium
+          pixi run mkdocs serve -a 127.0.0.1:8000 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/ >/dev/null && break
+            sleep 1
+          done
+          pixi run check-site
