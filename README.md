@@ -3,24 +3,52 @@
 Turn a research paper PDF into an interactive mkdocs site.
 
 ## Use it
-0. **Make a new directory and go into it**
-1. **Get the starter.** Click "Use this template" on GitHub, or:
+
+You have a PDF somewhere on your machine. Paste this to your coding agent, with
+your own path in place of the example:
+
+```text
+Clone https://github.com/droumis/paper-explainer-starter into a new directory
+named after the paper, replace the starter's git history with a fresh one, and
+copy ~/Downloads/some-paper.pdf into it. Then read that project's AGENTS.md and
+build the explainer site.
+```
+
+The agent reads the PDF and drafts the brief from it, then asks you the few things
+the paper cannot settle: who is reading, the one sentence they should remember,
+what to skip. After that it derives the figure crops, writes the pages, builds the
+diagrams, and checks the result in a browser. `pixi run serve` shows the site at
+`http://localhost:8000`.
+
+Reopen the new directory as its own project afterwards, so `/build-site` and
+`/audit-accuracy` load, and rebuilds are one command.
+
+### Or set it up by hand
+
+0. **Make an empty directory for the site and `cd` into it.** Name it whatever
+   you like. This becomes the project, one directory per paper.
+
+1. **Get the starter into it.**
 
    ```bash
-   git clone git@github.com:droumis/paper-explainer-starter.git my-paper-site
-   cd my-paper-site && rm -rf .git && git init
+   git clone https://github.com/droumis/paper-explainer-starter.git .
+   rm -rf .git && git init          # your own history, not the starter's
    ```
 
-2. **Put the PDF in that folder.** `cp ~/Downloads/some-paper.pdf .`
+   Or click "Use this template" on GitHub and clone your copy the same way.
 
-3. **Open the folder in your coding agent and run `/build-site`.** If it does not
-   do slash commands, say "follow AGENTS.md" instead.
+2. **Put the machinery in place and the PDF next to it.**
 
-The command reads the PDF and drafts the brief from it, then asks you the few
-things the paper cannot settle: who is reading, the one sentence they should
-remember, what to skip. After that it derives the figure crops, writes the pages,
-builds the diagrams, and checks the result in a browser. `pixi run serve` shows
-the site at `http://localhost:8000`.
+   ```bash
+   pixi run --manifest-path template/pixi.toml init
+   cp ~/Downloads/some-paper.pdf .
+   ```
+
+   The filename does not matter; the tooling reads whichever PDF is in the
+   project root, and complains if there are two.
+
+3. **Open the directory in your coding agent and run `/build-site`.** If it does
+   not do slash commands, say "follow AGENTS.md" instead.
 
 ### Steering it
 
@@ -34,6 +62,53 @@ in `PAPER.md`. The agent then picks the audience, the one sentence, the emphasis
 and the skip list from the paper, marks each choice in `PAPER.md`, and lists them
 when it finishes. That is the fastest path and the one most likely to aim at the
 wrong reader, so expect to correct a field and rebuild.
+
+### Several papers in one repo
+
+Cloning the starter per paper gives you N copies of the machinery to keep in
+step, and N environments. For a directory of papers, keep one repo instead:
+
+```bash
+git clone https://github.com/droumis/paper-explainer-starter.git ~/src/papers
+cd ~/src/papers
+pixi run --manifest-path template/pixi.toml init --mono
+pixi install
+pixi run new-paper andermann-2011     # scaffolds the directory
+```
+
+Keep the clone's history rather than running `git init`. The papers repo is then a
+fork of this one: machinery arrives by pulling, and your own commits only ever add
+paper directories.
+
+```bash
+git pull origin main       # machinery updates
+pixi run update            # push them into the root manifest and each paper's shared assets
+```
+
+`init --mono` puts `pixi.toml` at the root and links `scripts` to
+`template/scripts`, so there is one copy of the machinery for every paper. Those
+two are ignored by `.gitignore`, because they are local instantiation rather than
+content, which is what keeps every pull a clean fast-forward.
+
+Sending a lesson back upstream, once you hit one while writing a paper:
+
+```bash
+git fetch origin
+git checkout -b better-crop-check origin/main   # a branch with no paper commits
+git cherry-pick <the commit touching template/, skills/ or tests/>
+git push origin better-crop-check
+```
+
+Then drop that paper's PDF in `andermann-2011/`, and name the paper in any
+command: `pixi run probe andermann-2011 --suggest`, `pixi run serve
+andermann-2011`. The argument is optional while only one paper exists, and
+required once there are two, because guessing which paper you meant is how the
+wrong site gets rebuilt. `pixi run papers` lists them with their state.
+
+Each paper directory holds its own PDF, `PAPER.md`, `figures.toml`, `mkdocs.yml`
+and `docs/`, and builds its own independent site. `pixi run sync-assets` pushes a
+shared CSS or `stats.js` improvement from `template/` into papers that already
+exist, leaving each paper's `diagrams.js` alone.
 
 ## What you get
 
@@ -52,7 +127,7 @@ wrong reader, so expect to correct a field and rebuild.
 | `PAPER.md` | The brief. **The one file that steers the build.** Blank fields get drafted from the PDF and confirmed with you. |
 | `AGENTS.md` | Instructions the agent follows. |
 | `skills/paper-explainer/SKILL.md` | Accumulated lessons: figure geometry, diagram honesty, explaining a method, budgeting depth. |
-| `template/` | Working machinery, copied into the project root. Not reinvented per paper. |
+| `template/` | Working machinery, copied into the project root, or shared by every paper in a multi-paper repo. Not reinvented per paper. |
 | `.kilo/command/` | `/build-site` and `/audit-accuracy`. |
 
 ### The machinery
@@ -71,6 +146,12 @@ wrong reader, so expect to correct a field and rebuild.
 - `check_site.py` drives the built site in a browser: opens disclosures,
   exercises every control, scans for non-finite SVG geometry, counts genuinely
   broken images, reports console errors.
+- `project.py` decides which paper a command acts on, and loads that paper's
+  `figures.toml`. Every malformed crop entry is reported at once, with the key
+  named, rather than one per run.
+- `papers.py` scaffolds a paper, syncs the shared assets into existing papers,
+  and wraps `mkdocs serve`/`build` so the project is named the same way for every
+  command.
 
 `template/docs/assets/js/lib/stats.js` is paper-agnostic statistics: seeded RNG,
 Poisson sampling, a linear solver, a Poisson GLM fitted by IRLS with an optional

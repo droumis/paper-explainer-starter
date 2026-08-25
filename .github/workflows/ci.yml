@@ -40,13 +40,14 @@ jobs:
       - name: Figure geometry tests
         run: pixi run --manifest-path template/pixi.toml python tests/test_pdf_geometry.py
 
-      # The starter's whole promise is that `cp -r template/* .` gives a working
-      # project, so instantiate it exactly as the README says and build.
+      # The starter's whole promise is that `init` gives a working project, so
+      # instantiate it exactly as the README says and build.
       - name: Template instantiates and builds clean
         run: |
           work=$(mktemp -d)
-          cp -r template/* "$work"/
-          cd "$work"
+          cp -r . "$work"/repo
+          cd "$work"/repo
+          pixi run --manifest-path template/pixi.toml init
           pixi install
           pixi run build 2>&1 | tee build.log
           if grep -q WARNING build.log; then
@@ -54,12 +55,21 @@ jobs:
             grep WARNING build.log
             exit 1
           fi
+          # A project whose own files are git-ignored cannot be committed, and
+          # the starter's .gitignore does exactly that until init replaces it.
+          for f in docs/index.md mkdocs.yml scripts/probe_pdf.py figures.toml; do
+            if git check-ignore -q "$f"; then
+              echo "::error::init left $f git-ignored"
+              exit 1
+            fi
+          done
 
-      - name: A fresh project refuses to verify empty FIGURES
+      - name: A fresh project reports what it is missing
         run: |
           work=$(mktemp -d)
-          cp -r template/* "$work"/
-          cd "$work"
+          cp -r . "$work"/repo
+          cd "$work"/repo
+          pixi run --manifest-path template/pixi.toml init
           # No PDF present: the tooling must say so rather than crash obscurely.
           if pixi run probe 2>&1 | grep -q "No PDF found"; then
             echo "probe reports a missing PDF correctly"
@@ -67,13 +77,64 @@ jobs:
             echo "::error::probe should report a missing PDF"
             exit 1
           fi
+          # Verification must never pass vacuously on an unfinished project,
+          # whether what is missing is the PDF or the crop boxes. The empty
+          # figures.toml case is covered directly in tests/test_pdf_geometry.py,
+          # which has a fixture PDF to verify against.
+          if pixi run verify-figures 2>&1 | grep -qE "No PDF found|nothing to verify"; then
+            echo "verify-figures refuses an unfinished project"
+          else
+            echo "::error::verify-figures should refuse an unfinished project"
+            exit 1
+          fi
+
+      # The second supported layout: one repo, shared machinery, a directory per
+      # paper. Scaffolding must work and each paper must build on its own.
+      - name: A multi-paper repo scaffolds and builds
+        run: |
+          work=$(mktemp -d)
+          cp -r . "$work"/repo
+          cd "$work"/repo
+          pixi run --manifest-path template/pixi.toml init --mono
+          pixi install
+          pixi run new-paper paper-one
+          pixi run new-paper paper-two
+          test -f paper-one/figures.toml
+          test -f paper-two/mkdocs.yml
+          # Scaffolding into a directory that already holds the PDF is the normal
+          # way to start, and must not need the directory moved aside.
+          mkdir paper-three && touch paper-three/paper.pdf
+          pixi run new-paper paper-three
+          test -f paper-three/paper.pdf && test -f paper-three/mkdocs.yml
+          # But it must never overwrite a paper that already exists.
+          if pixi run new-paper paper-one 2>&1 | grep -q "Refusing to overwrite"; then
+            echo "an existing paper is not overwritten"
+          else
+            echo "::error::new-paper should refuse to overwrite an existing paper"
+            exit 1
+          fi
+          # Two papers and no name given: refuse rather than pick one.
+          if pixi run probe 2>&1 | grep -q "Several paper projects"; then
+            echo "an ambiguous project is an error, not a guess"
+          else
+            echo "::error::probe should refuse to choose between two papers"
+            exit 1
+          fi
+          pixi run papers
+          pixi run build paper-one 2>&1 | tee build.log
+          if grep -q WARNING build.log; then
+            echo "::error::a scaffolded paper must build with no warnings"
+            grep WARNING build.log
+            exit 1
+          fi
+          pixi run sync-assets
 
       - name: Template ships no paper-specific state
         run: |
-          # FIGURES must be empty, or every new project starts with someone
-          # else's crop boxes.
-          if grep -qE '^\s+"fig[0-9a-z_]+":' template/scripts/extract_figures.py; then
-            echo "::error::template/scripts/extract_figures.py has FIGURES filled in"
+          # figures.toml must hold no live entries, or every new project starts
+          # with someone else's crop boxes.
+          if grep -qE '^\[figures\.' template/figures.toml; then
+            echo "::error::template/figures.toml has crop boxes filled in"
             exit 1
           fi
           if ls template/docs/assets/img/figures/*.png >/dev/null 2>&1; then

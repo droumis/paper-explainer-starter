@@ -13,11 +13,14 @@ Usage:
     pixi run probe --render 10          # write a PNG of one page to inspect
     pixi run probe --render-all         # write PNGs of every page
 
+Add the project directory as the first argument when the repo holds several
+papers: `pixi run probe andermann-2011 --suggest`.
+
 Typical workflow:
     1. `--suggest` to get candidate boxes and the panel labels on each page.
-    2. Paste the boxes into FIGURES in extract_figures.py, splitting any page
-       whose panels serve different site pages.
-    3. `pixi run extract-figures --verify` until all checks pass.
+    2. Paste the boxes into the project's figures.toml, splitting any page whose
+       panels serve different site pages.
+    3. `pixi run verify-figures` until all checks pass.
 """
 
 import sys
@@ -35,9 +38,7 @@ from pdf_geometry import (  # noqa: E402
     prose_words,
     suggest_crop,
 )
-
-ROOT = Path(__file__).parent.parent
-OUT_DIR = ROOT / "docs" / "assets" / "img" / "figures" / "pages"
+from project import resolve_project, split_project_arg  # noqa: E402
 
 
 def fmt(r):
@@ -58,7 +59,7 @@ def inventory(doc):
         cap = caps[0][:34] if caps else ""
         print(f"{i:4d}  {len(gfx):8d}  {''.join(sorted(set(labels))):20s}  {cap}")
     print("\nPage indices above are 0-based and do NOT match the paper's printed")
-    print("page numbers. Always use these indices in FIGURES.")
+    print("page numbers. Always use these indices in figures.toml.")
 
 
 def detail(doc, idx):
@@ -105,7 +106,7 @@ def detail(doc, idx):
 
 def suggest_all(doc):
     print("Candidate crop boxes. Split any page whose panels serve different")
-    print("site pages, then paste into FIGURES in extract_figures.py.\n")
+    print("site pages, then paste into the project's figures.toml.\n")
     for i, page in enumerate(doc):
         if not list(figure_graphics(page)):
             continue
@@ -113,37 +114,40 @@ def suggest_all(doc):
         if not s:
             continue
         labels = "".join(sorted({t for _, t in panel_labels(page)}))
-        print(f'    # page {i}: panels {labels or "(none detected)"}')
+        print(f'# page {i}: panels {labels or "(none detected)"}')
         for n in notes:
-            print(f'    #   ! {n}')
-        print(f'    "figN_name": ({i}, fitz.Rect('
-              f'{s.x0:.0f}, {s.y0:.0f}, {s.x1:.0f}, {s.y1:.0f})),')
+            print(f'#   ! {n}')
+        print(f'[figures.fig{i}_name]')
+        print(f'page = {i}')
+        print(f'box = [{s.x0:.0f}, {s.y0:.0f}, {s.x1:.0f}, {s.y1:.0f}]\n')
 
 
-def render(doc, idx, zoom=2.0):
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def render(doc, out_dir, idx, zoom=2.0):
+    out_dir.mkdir(parents=True, exist_ok=True)
     page = doc[idx]
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-    out = OUT_DIR / f"page_{idx:02d}.png"
+    out = out_dir / f"page_{idx:02d}.png"
     pix.save(str(out))
     print(f"  wrote {out}  ({pix.width}x{pix.height})")
 
 
 def main():
-    pdf = find_pdf(ROOT)
+    name, args = split_project_arg(sys.argv[1:], ("--page", "--render"))
+    project = resolve_project(name)
+    pages_dir = project / "docs" / "assets" / "img" / "figures" / "pages"
+    pdf = find_pdf(project)
     print(f"PDF: {pdf.name}\n")
     doc = fitz.open(str(pdf))
 
-    args = sys.argv[1:]
     if "--page" in args:
         detail(doc, int(args[args.index("--page") + 1]))
     elif "--suggest" in args:
         suggest_all(doc)
     elif "--render" in args:
-        render(doc, int(args[args.index("--render") + 1]))
+        render(doc, pages_dir, int(args[args.index("--render") + 1]))
     elif "--render-all" in args:
         for i in range(len(doc)):
-            render(doc, i)
+            render(doc, pages_dir, i)
     else:
         inventory(doc)
     doc.close()

@@ -5,9 +5,18 @@ description = "Interactive visual guide to a research paper"
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
+# Every task takes an optional project directory as its first argument, needed
+# only when the repo holds several papers:
+#     pixi run probe                    the single project here
+#     pixi run probe andermann-2011     that project
 [tasks]
-serve = "mkdocs serve"
-build = "mkdocs build"
+init = "python scripts/papers.py init"
+update = "python scripts/papers.py update"
+papers = "python scripts/papers.py list"
+new-paper = "python scripts/papers.py new"
+sync-assets = "python scripts/papers.py sync-assets"
+serve = "python scripts/papers.py serve"
+build = "python scripts/papers.py build"
 probe = "python scripts/probe_pdf.py"
 extract-figures = "python scripts/extract_figures.py"
 verify-figures = "python scripts/extract_figures.py --verify"

@@ -1,8 +1,17 @@
 #!/usr/bin/env python
-"""Crop figures out of the paper PDF, refusing to write bad crops.
+"""Crop figures out of a paper PDF, refusing to write bad crops.
 
-Fill in FIGURES below, then run `pixi run extract-figures`. Use
-`pixi run probe --suggest` to get candidate boxes rather than guessing.
+Crop boxes live in the project's `figures.toml`, not in this file, because one
+copy of this script serves every paper in a multi-paper repo. Fill that file in
+from `pixi run probe --suggest`, then run `pixi run extract-figures`.
+
+Usage:
+    pixi run verify-figures [paper]        checks only, writes nothing
+    pixi run extract-figures [paper]       verify, then write the crops
+    pixi run check-refs [paper]            crops and markdown agree both ways
+    pixi run extract-figures [paper] --pages   full-page renders
+
+`paper` is the project directory, needed only when the repo holds several.
 
 Three checks gate every write, and they exist because each corresponds to a
 class of bug that otherwise ships silently:
@@ -16,6 +25,7 @@ Confirm the checks actually bite before trusting them: temporarily set a box to
 something obviously wrong (a whole page, say) and watch all three complain.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -24,15 +34,14 @@ import fitz
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_geometry import (  # noqa: E402
     figure_graphics,
-    find_pdf,
     panel_labels,
     prose_words,
 )
-
-ROOT = Path(__file__).parent.parent
-PDF_PATH = find_pdf(ROOT)
-OUT_DIR = ROOT / "docs" / "assets" / "img" / "figures"
-PAGES_DIR = OUT_DIR / "pages"
+from project import (  # noqa: E402
+    Paper,
+    resolve_project,
+    split_project_arg,
+)
 
 DPI = 250
 ZOOM = DPI / 72
@@ -50,27 +59,18 @@ CLIP_TOLERANCE = 2.0
 MIN_STRANDED_SIZE = 4.0
 
 
-# ---------------------------------------------------------------------------
-# FIGURES: one entry per crop, keyed by the filename used in docs/*.md.
-#
-# Page indices are 0-based PyMuPDF indices and do NOT match the paper's printed
-# page numbers. Get them from `pixi run probe`.
-#
-# ONE CROP PER CLAIM. If a figure's panels serve different site pages, split it
-# into several entries so each page's caption describes exactly what is visible.
-# Naming a crop after its panels (fig6ab_..., fig6c_..., fig6de_...) keeps that
-# honest.
-# ---------------------------------------------------------------------------
-FIGURES: dict[str, tuple[int, fitz.Rect]] = {
-    # "fig1_task": (2, fitz.Rect(56, 98, 297, 307)),
-}
+def by_page(figures):
+    grouped = {}
+    for name, (page_idx, rect) in figures.items():
+        grouped.setdefault(page_idx, []).append((name, rect))
+    return grouped
 
 
-def verify_crops():
+def verify_crops(paper):
     """No crop may contain caption or body prose."""
-    doc = fitz.open(str(PDF_PATH))
+    doc = fitz.open(str(paper.pdf))
     problems = []
-    for name, (page_idx, rect) in FIGURES.items():
+    for name, (page_idx, rect) in paper.figures.items():
         page = doc[page_idx]
         intruders = [t for wrect, t in prose_words(page) if rect.intersects(wrect)]
         if intruders:
@@ -82,24 +82,20 @@ def verify_crops():
         for p in problems:
             print(f"  {p}")
         return False
-    print(f"  all {len(FIGURES)} crop boxes clear of caption and body text")
+    print(f"  all {len(paper.figures)} crop boxes clear of caption and body text")
     return True
 
 
-def verify_coverage():
+def verify_coverage(paper):
     """No crop may slice through figure content, and none may be stranded.
 
     Two ways content is lost. A crop cuts through a graphic, or a graphic falls
     entirely between two crops on the same page so it intersects neither.
     Splitting a figure into per-page crops creates exactly those gaps.
     """
-    doc = fitz.open(str(PDF_PATH))
-    by_page = {}
-    for name, (page_idx, rect) in FIGURES.items():
-        by_page.setdefault(page_idx, []).append((name, rect))
-
+    doc = fitz.open(str(paper.pdf))
     problems = []
-    for page_idx, crops in by_page.items():
+    for page_idx, crops in by_page(paper.figures).items():
         page = doc[page_idx]
         graphics = list(figure_graphics(page))
         for name, rect in crops:
@@ -135,23 +131,19 @@ def verify_coverage():
         for p in problems:
             print(f"  {p}")
         return False
-    print(f"  all {len(FIGURES)} crop boxes contain their figure content")
+    print(f"  all {len(paper.figures)} crop boxes contain their figure content")
     return True
 
 
-def verify_panel_labels():
+def verify_panel_labels(paper):
     """Every panel label must land inside some crop for its page.
 
     Direct guard against the worst failure mode: a caption describing a panel
     the reader cannot see.
     """
-    doc = fitz.open(str(PDF_PATH))
-    by_page = {}
-    for name, (page_idx, rect) in FIGURES.items():
-        by_page.setdefault(page_idx, []).append((name, rect))
-
+    doc = fitz.open(str(paper.pdf))
     problems = []
-    for page_idx, crops in by_page.items():
+    for page_idx, crops in by_page(paper.figures).items():
         page = doc[page_idx]
         for rect, letter in panel_labels(page):
             if not any(crop.contains(rect) for _, crop in crops):
@@ -172,53 +164,49 @@ def verify_panel_labels():
 CHECKS = (verify_crops, verify_coverage, verify_panel_labels)
 
 
-def verify_all():
-    # An empty FIGURES makes every check vacuously true, so `--verify` would
-    # report success on a project where no figures have been defined yet. In CI
-    # that is a green build on unfinished work, so treat it as a failure.
-    if not FIGURES:
-        print("FAILED: FIGURES is empty, so there is nothing to verify.")
+def verify_all(paper):
+    # An empty figures.toml makes every check vacuously true, so `--verify`
+    # would report success on a project where no figures have been defined yet.
+    # In CI that is a green build on unfinished work, so treat it as a failure.
+    if not paper.figures:
+        print(f"FAILED: no crops defined in {paper.root / 'figures.toml'}, "
+              "so there is nothing to verify.")
         print("  Run `pixi run probe --suggest` to get candidate crop boxes.")
         return False
     # A list, not a generator, so every check runs and reports rather than
     # short-circuiting at the first failure.
-    return all([check() for check in CHECKS])
+    return all([check(paper) for check in CHECKS])
 
 
-def crop_figures():
-    if not FIGURES:
-        raise SystemExit(
-            "FIGURES is empty. Run `pixi run probe --suggest` to get candidate\n"
-            "boxes, paste them in, then re-run this."
-        )
-    if not verify_all():
+def crop_figures(paper):
+    if not verify_all(paper):
         raise SystemExit("Refusing to write figures with bad crop boxes.")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    doc = fitz.open(str(PDF_PATH))
-    for name, (page_idx, rect) in FIGURES.items():
+    paper.figure_dir.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open(str(paper.pdf))
+    for name, (page_idx, rect) in paper.figures.items():
         page = doc[page_idx]
         zoom = min(ZOOM, MAX_FIGURE_WIDTH / rect.width)
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect)
-        out_path = OUT_DIR / f"{name}.png"
+        out_path = paper.figure_dir / f"{name}.png"
         pix.save(str(out_path))
         kb = out_path.stat().st_size / 1024
         print(f"  {name}.png ({pix.width}x{pix.height}, {kb:.0f} KB)")
     doc.close()
 
 
-def render_all_pages(zoom=2.0):
+def render_all_pages(paper, zoom=2.0):
     """Full-page renders, for identifying which page holds which figure."""
-    PAGES_DIR.mkdir(parents=True, exist_ok=True)
-    doc = fitz.open(str(PDF_PATH))
+    paper.pages_dir.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open(str(paper.pdf))
     for i, page in enumerate(doc):
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-        pix.save(str(PAGES_DIR / f"page_{i:02d}.png"))
-    print(f"  wrote {len(doc)} page renders to {PAGES_DIR}")
+        pix.save(str(paper.pages_dir / f"page_{i:02d}.png"))
+    print(f"  wrote {len(doc)} page renders to {paper.pages_dir}")
     doc.close()
 
 
-def check_references(docs_dir=None):
+def check_references(paper):
     """Cross-check figures against the markdown, in both directions.
 
     The second direction catches stale orphans: if a key is renamed but the
@@ -226,16 +214,14 @@ def check_references(docs_dir=None):
     re-running extraction never regenerates, so fixing a crop box appears to do
     nothing at all.
     """
-    docs_dir = docs_dir or (ROOT / "docs")
-    md = "\n".join(p.read_text() for p in docs_dir.glob("*.md"))
+    md = "\n".join(p.read_text() for p in paper.docs.glob("*.md"))
     ok = True
-    for name in FIGURES:
+    for name in paper.figures:
         if f"{name}.png" not in md:
             print(f"  generated but unreferenced: {name}.png")
             ok = False
-    import re
     for ref in sorted(set(re.findall(r"figures/([a-z0-9_]+)\.png", md))):
-        if not (OUT_DIR / f"{ref}.png").exists():
+        if not (paper.figure_dir / f"{ref}.png").exists():
             print(f"  referenced but missing: {ref}.png")
             ok = False
     if ok:
@@ -243,14 +229,25 @@ def check_references(docs_dir=None):
     return ok
 
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
-    print(f"PDF: {PDF_PATH.name}")
+def main(argv=None):
+    name, args = split_project_arg(sys.argv[1:] if argv is None else argv)
+    project = resolve_project(name)
+    if project != Path.cwd():
+        print(f"paper: {project.name}")
+
+    if "--check-refs" in args:
+        paper = Paper.load(project, need_pdf=False)
+        raise SystemExit(0 if check_references(paper) else 1)
+
+    paper = Paper.load(project, need_figures="--pages" not in args)
+    print(f"PDF: {paper.pdf.name}")
     if "--pages" in args:
-        render_all_pages()
+        render_all_pages(paper)
     elif "--verify" in args:
-        raise SystemExit(0 if verify_all() else 1)
-    elif "--check-refs" in args:
-        raise SystemExit(0 if check_references() else 1)
+        raise SystemExit(0 if verify_all(paper) else 1)
     else:
-        crop_figures()
+        crop_figures(paper)
+
+
+if __name__ == "__main__":
+    main()

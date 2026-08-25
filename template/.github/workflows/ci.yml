@@ -4,7 +4,10 @@
 # describing panels the crop cut off, a figure file nothing referenced, a
 # diagram whose scale went NaN, a page with a silent console error.
 #
-# The paper PDF is usually not redistributable, so figure steps run only when a
+# Works for both layouts. One paper per repo puts mkdocs.yml at the root; a repo
+# holding several papers puts one per subdirectory, and every step then loops.
+#
+# The paper PDF is usually not redistributable, so figure steps run only where a
 # PDF is present. Commit-free CI still checks syntax, the build, and the site.
 name: CI
 
@@ -26,10 +29,32 @@ jobs:
         with:
           node-version: "20"
 
+      # One list of paper directories, used by every step below, so a new paper
+      # cannot be silently left out of CI.
+      - name: Find paper projects
+        id: papers
+        run: |
+          if [ -f mkdocs.yml ]; then
+            papers="."
+          else
+            papers=$(find . -mindepth 2 -maxdepth 2 -name mkdocs.yml \
+                       -not -path './template/*' -printf '%h\n' | sed 's|^\./||' | sort)
+          fi
+          if [ -z "$papers" ]; then
+            echo "::error::No mkdocs.yml found at the root or one level down"
+            exit 1
+          fi
+          echo "list<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$papers" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "papers:"; echo "$papers"
+
       - name: JavaScript syntax
         run: |
-          for f in docs/assets/js/*.js docs/assets/js/lib/*.js; do
-            [ -e "$f" ] && node --check "$f"
+          for p in ${{ steps.papers.outputs.list }}; do
+            for f in "$p"/docs/assets/js/*.js "$p"/docs/assets/js/lib/*.js; do
+              [ -e "$f" ] && node --check "$f"
+            done
           done
 
       - name: Python syntax
@@ -40,41 +65,54 @@ jobs:
 
       - name: Prose conventions
         run: |
-          # Em dashes are held at zero. Commas, colons, periods, parentheses.
-          if grep -rn "—" docs/*.md; then
-            echo "::error::em dashes found; use commas, colons, periods or parentheses"
-            exit 1
-          fi
-          # "not just X but Y" states the contrast instead of the point.
-          if grep -rniE "not just .{1,40} but " docs/*.md; then
-            echo "::error::binary contrast found; state the positive claim directly"
-            exit 1
-          fi
+          for p in ${{ steps.papers.outputs.list }}; do
+            # Em dashes are held at zero. Commas, colons, periods, parentheses.
+            if grep -rn "—" "$p"/docs/*.md; then
+              echo "::error::em dashes found in $p; use commas, colons, periods or parentheses"
+              exit 1
+            fi
+            # "not just X but Y" states the contrast instead of the point.
+            if grep -rniE "not just .{1,40} but " "$p"/docs/*.md; then
+              echo "::error::binary contrast found in $p; state the positive claim directly"
+              exit 1
+            fi
+          done
 
       - name: Figure crops verify
         run: |
-          if ls *.pdf >/dev/null 2>&1; then
-            pixi run verify-figures
-            pixi run check-refs
-          else
-            echo "No PDF in the repo, skipping figure checks."
-          fi
+          for p in ${{ steps.papers.outputs.list }}; do
+            if ls "$p"/*.pdf >/dev/null 2>&1; then
+              pixi run verify-figures "$p"
+              pixi run check-refs "$p"
+            else
+              echo "No PDF in $p, skipping figure checks."
+            fi
+          done
 
       - name: Build
         run: |
-          pixi run build 2>&1 | tee build.log
-          if grep -q WARNING build.log; then
-            echo "::error::build emitted warnings"
-            grep WARNING build.log
-            exit 1
-          fi
+          for p in ${{ steps.papers.outputs.list }}; do
+            pixi run build "$p" 2>&1 | tee build.log
+            if grep -q WARNING build.log; then
+              echo "::error::$p built with warnings"
+              grep WARNING build.log
+              exit 1
+            fi
+          done
 
       - name: Browser check
         run: |
           pixi run playwright install --with-deps chromium
-          pixi run mkdocs serve -a 127.0.0.1:8000 &
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8000/ >/dev/null && break
-            sleep 1
+          # A port per paper, rather than stopping each server: `pixi run serve`
+          # execs mkdocs, so killing the job's child does not reliably stop it,
+          # and a stale server on the port would silently check the wrong site.
+          port=8000
+          for p in ${{ steps.papers.outputs.list }}; do
+            pixi run serve "$p" -a "127.0.0.1:$port" &
+            for i in $(seq 1 30); do
+              curl -sf "http://127.0.0.1:$port/" >/dev/null && break
+              sleep 1
+            done
+            pixi run check-site "$p" --port "$port"
+            port=$((port + 1))
           done
-          pixi run check-site

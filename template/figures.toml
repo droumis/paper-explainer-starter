@@ -1,0 +1,19 @@
+# Figure crops for this paper. One entry per crop, keyed by the filename used
+# in docs/*.md, so [figures.fig1_task] becomes figures/fig1_task.png.
+#
+# Get the numbers from `pixi run probe --suggest`, which prints entries in this
+# format. Page indices are 0-based PyMuPDF indices and do NOT match the paper's
+# printed page numbers. Boxes are [x0, y0, x1, y1] in points.
+#
+# ONE CROP PER CLAIM. If a figure's panels serve different site pages, split it
+# into several entries so each page's caption describes exactly what is visible.
+# Naming a crop after its panels (fig6ab_..., fig6c_..., fig6de_...) keeps that
+# honest.
+#
+# `pixi run verify-figures` refuses to pass an empty file, and refuses to write
+# crops that swallow prose, clip a panel, strand content between two crops, or
+# leave a panel label outside every box.
+
+# [figures.fig1_task]
+# page = 2
+# box = [56, 98, 297, 307]

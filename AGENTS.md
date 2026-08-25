@@ -24,8 +24,25 @@ root.
 2. **Load the `paper-explainer` skill** in `skills/paper-explainer/SKILL.md`. It
    carries the accumulated lessons: figure geometry, diagram honesty, how to
    explain a statistical method, how to budget depth. Follow it.
-3. **Copy `template/` into the project root** if it has not been copied yet:
-   `pixi.toml`, `mkdocs.yml`, `scripts/`, `docs/`. Then `pixi install`.
+3. **Put the machinery in place** if it is not there yet, in whichever layout
+   the repo uses:
+
+   ```bash
+   pixi run --manifest-path template/pixi.toml init            # one paper per repo
+   pixi run --manifest-path template/pixi.toml init --mono     # several papers
+   pixi install
+   ```
+
+   Do not copy `template/` by hand. `init` also carries the dotfiles, and the
+   `.gitignore` is one of them: the starter's own version ignores an
+   instantiated project's `docs/`, `scripts/` and `mkdocs.yml`, so a hand-copied
+   project cannot be committed and nothing says why. In the multi-paper layout,
+   create each paper with `pixi run new-paper <name>`.
+
+   Every task takes the paper directory as an optional first argument, needed
+   only when the repo holds several: `pixi run probe andermann-2011 --suggest`.
+   Naming nothing where several papers exist is an error, so check which layout
+   you are in before running anything.
 4. **Read the paper.** Not just the abstract and figures: the methods, and the
    supplemental methods, which is where the details that make claims correct
    actually live.
@@ -46,7 +63,8 @@ Page indices are 0-based and do not match printed page numbers.
 
 ### 2. Extract the figures
 
-Fill in `FIGURES` in `scripts/extract_figures.py` from the probe output, then:
+Fill in the paper's `figures.toml` from the probe output, which prints entries in
+exactly that format, then:
 
 ```bash
 pixi run verify-figures        # must pass before writing anything
@@ -144,6 +162,20 @@ Check it against its siblings by word count. If one page is three times longer
 than the rest, the depth needs demoting behind a disclosure, not keeping.
 
 ## Feeding lessons back
+
+In a repo that adds papers on top of the starter, keep machinery commits separate
+from paper commits, so a lesson can be sent upstream without dragging a paper
+with it:
+
+```bash
+git fetch origin
+git checkout -b <lesson> origin/main    # a branch with no paper commits on it
+git cherry-pick <commit touching template/, skills/ or tests/ only>
+git push origin <lesson>
+```
+
+Pulling the other way is `git pull origin main` followed by `pixi run update`,
+which refreshes the root manifest and the shared css/js inside each paper.
 
 `skills/paper-explainer/SKILL.md` is meant to accumulate. When you hit a
 pitfall, find a better approach, or discover a convention worth keeping, update

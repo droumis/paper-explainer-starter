@@ -17,6 +17,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "template" / "scripts"))
 
 import pdf_geometry as G  # noqa: E402
+import project as P  # noqa: E402
 
 PAGE_W, PAGE_H = 603, 783
 
@@ -97,6 +98,141 @@ def check(name, condition, detail=""):
     return bool(condition)
 
 
+def expect_exit(fn, *needles):
+    """Run `fn`, expecting SystemExit whose message mentions every needle."""
+    try:
+        fn()
+    except SystemExit as exc:
+        msg = str(exc)
+        return all(n in msg for n in needles), msg
+    return False, "no SystemExit raised"
+
+
+def check_project_module():
+    """figures.toml parsing and project resolution.
+
+    These exist because both replaced something that used to be impossible to
+    get wrong: crop boxes were Python, so a typo was a syntax error, and the
+    project was wherever the script lived. Data files and a search need checks.
+    """
+    import tempfile
+
+    passed = []
+    print("\nfigures.toml")
+    with tempfile.TemporaryDirectory() as d:
+        proj = Path(d) / "paper"
+        proj.mkdir()
+        (proj / "mkdocs.yml").write_text("site_name: x\n")
+
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "figures.toml")
+        passed.append(check("a missing figures.toml names the file it wants", ok, msg))
+
+        (proj / "figures.toml").write_text("# nothing yet\n")
+        passed.append(check("a comment-only file loads as no crops",
+                            P.load_figures(proj) == {}))
+
+        (proj / "figures.toml").write_text(
+            "[figures.fig1_task]\npage = 2\nbox = [56, 98, 297, 307]\n")
+        figs = P.load_figures(proj)
+        passed.append(check("a valid entry becomes (page, Rect)",
+                            figs == {"fig1_task": (2, fitz.Rect(56, 98, 297, 307))},
+                            f"got {figs}"))
+
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = -1\nbox = [56, 98, 297, 307]\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "page")
+        passed.append(check("a negative page index is rejected", ok, msg))
+
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = 2\nbox = [297, 307, 56, 98]\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "inverted")
+        passed.append(check("an inverted box is rejected", ok, msg))
+
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = 2\nbox = [1, 2, 3]\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "x0, y0, x1, y1")
+        passed.append(check("a three-number box is rejected", ok, msg))
+
+        # A name outside [a-z0-9_] would be written and then reported as
+        # unreferenced, because that is the class the markdown scanner matches.
+        (proj / "figures.toml").write_text(
+            "[figures.Fig1]\npage = 2\nbox = [56, 98, 297, 307]\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "lowercase")
+        passed.append(check("an uppercase crop name is rejected", ok, msg))
+
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = 2\nbox = [56, 98, 297, 307]\nzoom = 3\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "unexpected key")
+        passed.append(check("an unknown key is rejected rather than ignored",
+                            ok, msg))
+
+        # Every bad entry at once, so filling this in is one edit-and-rerun.
+        (proj / "figures.toml").write_text(
+            "[figures.a]\npage = 2\nbox = [1, 2]\n"
+            "[figures.b]\npage = 2\nbox = [9, 9, 1, 1]\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "a:", "b:")
+        passed.append(check("both malformed entries are reported together",
+                            ok, msg))
+
+    print("\nproject resolution")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        one = root / "paper-one"
+        one.mkdir()
+        (one / "mkdocs.yml").write_text("site_name: one\n")
+
+        passed.append(check("a project directory resolves to itself",
+                            P.resolve_project(None, cwd=one) == one.resolve()))
+        passed.append(check("a lone project below the cwd is found without naming it",
+                            P.resolve_project(None, cwd=root) == one.resolve()))
+        passed.append(check("a named project resolves",
+                            P.resolve_project("paper-one", cwd=root) == one.resolve()))
+
+        two = root / "paper-two"
+        two.mkdir()
+        (two / "mkdocs.yml").write_text("site_name: two\n")
+        ok, msg = expect_exit(lambda: P.resolve_project(None, cwd=root),
+                              "paper-one", "paper-two")
+        passed.append(check("two projects force the choice instead of guessing",
+                            ok, msg))
+
+        # The scaffold source carries a mkdocs.yml and a figures.toml so a
+        # project can be copied out of it, which made it a phantom third paper.
+        scaffold = root / "template"
+        (scaffold / "scripts").mkdir(parents=True)
+        (scaffold / "mkdocs.yml").write_text("site_name: t\n")
+        found = [p.name for p in P.candidate_projects(root)]
+        passed.append(check("template/ is not counted as a paper",
+                            found == ["paper-one", "paper-two"], f"got {found}"))
+        ok, msg = expect_exit(lambda: P.resolve_project("template", cwd=root),
+                              "scaffold")
+        passed.append(check("naming template/ is refused", ok, msg))
+
+        (root / "notes").mkdir()
+        ok, msg = expect_exit(lambda: P.resolve_project("notes", cwd=root),
+                              "new-paper")
+        passed.append(check("a directory that is not a project says how to make one",
+                            ok, msg))
+        ok, msg = expect_exit(lambda: P.resolve_project("nope", cwd=root),
+                              "No such directory")
+        passed.append(check("a missing directory is reported plainly", ok, msg))
+
+    print("\nargument splitting")
+    cases = [
+        (["andermann"], (), "andermann", []),
+        (["--verify", "andermann"], (), "andermann", ["--verify"]),
+        (["--suggest"], (), None, ["--suggest"]),
+        (["--page", "10"], ("--page",), None, ["--page", "10"]),
+        (["--page", "10", "andermann"], ("--page",), "andermann", ["--page", "10"]),
+        (["--port", "8001"], ("--port",), None, ["--port", "8001"]),
+    ]
+    for argv, value_flags, want_name, want_rest in cases:
+        got = P.split_project_arg(argv, value_flags)
+        passed.append(check(f"{argv} -> {want_name!r}", got == (want_name, want_rest),
+                            f"got {got}"))
+    return passed
+
+
 def main():
     tmp = ROOT / "tests" / "_fixture.pdf"
     build_fixture(tmp)
@@ -161,28 +297,15 @@ def main():
 
     # ---- the three checks, driven through extract_figures
     print("\ncrop checks (via extract_figures)")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "ef", ROOT / "template" / "scripts" / "extract_figures.py")
-    ef = importlib.util.module_from_spec(spec)
-    # extract_figures resolves the PDF at import time, so point it at the fixture
-    sys.argv = ["ef"]
-    orig_find = G.find_pdf
-    G.find_pdf = lambda root: tmp
-    try:
-        spec.loader.exec_module(ef)
-    finally:
-        G.find_pdf = orig_find
-    ef.PDF_PATH = tmp
-
+    import extract_figures as ef  # noqa: E402
     import io
     import contextlib
 
     def run(figs):
-        ef.FIGURES = figs
+        paper = P.Paper(root=ROOT / "tests", pdf=tmp, figures=figs)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            result = ef.verify_all()
+            result = ef.verify_all(paper)
         return result, buf.getvalue()
 
     # Assert the end-to-end property that matters: a box produced by
@@ -211,8 +334,10 @@ def main():
                         not ok and "falls in no crop" in out))
 
     ok, out = run({})
-    passed.append(check("an empty FIGURES is rejected, not vacuously passed",
-                        not ok and "empty" in out))
+    passed.append(check("an empty figures.toml is rejected, not vacuously passed",
+                        not ok and "nothing to verify" in out))
+
+    passed.extend(check_project_module())
 
     tmp.unlink(missing_ok=True)
     print(f"\n{sum(passed)}/{len(passed)} checks passed")

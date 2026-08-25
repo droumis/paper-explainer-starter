@@ -17,6 +17,9 @@ Usage:
     pixi run check-site
     pixi run check-site --shots     # also save a screenshot per page
 
+Add the project directory as the first argument when the repo holds several
+papers: `pixi run check-site andermann-2011`.
+
 Why a browser and not a unit test: every failure this catches is a rendering
 failure that a build step reports as success.
 """
@@ -25,10 +28,12 @@ import re
 import sys
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).parent.parent
-OUT = ROOT / "screenshots"
+sys.path.insert(0, str(Path(__file__).parent))
+from project import resolve_project, split_project_arg  # noqa: E402
+
 DEFAULT_PORT = 8000
 
 # A lazy image that has not loaded is not broken. Only zero intrinsic width
@@ -97,37 +102,45 @@ RENDERED_CONTAINERS = """
 """
 
 
-def site_name():
+def site_name(project):
     """The site_name declared in mkdocs.yml, used to confirm identity."""
     m = re.search(r'^site_name:\s*["\']?(.+?)["\']?\s*$',
-                  (ROOT / "mkdocs.yml").read_text(), re.M)
+                  (project / "mkdocs.yml").read_text(), re.M)
     return m.group(1).strip() if m else None
 
 
-def confirm_right_site(page, base):
+def confirm_right_site(page, base, project):
     """Refuse to check a server that is not this project.
 
     Ports get reused. A stale `mkdocs serve` from another project will answer on
     8000 and every page of this site will 404, which looks like a site bug and
-    is not one. Fail loudly instead.
+    is not one. In a repo holding several papers that is the normal case rather
+    than an accident, so fail loudly.
     """
-    expected = site_name()
+    expected = site_name(project)
     title = page.title()
     if expected and expected.lower() not in (title or "").lower():
         raise SystemExit(
-            f"{base} is serving '{title}', but mkdocs.yml declares "
-            f"'{expected}'.\nAnother project is probably on that port. Run "
-            f"`pixi run serve` for THIS project, or pass --port N."
+            f"{base} is serving '{title}', but {project.name}/mkdocs.yml "
+            f"declares '{expected}'.\nAnother site is on that port. Run "
+            f"`pixi run serve {project.name}`, or pass --port N."
         )
 
 
-def page_slugs():
-    """Page URLs, from mkdocs.yml nav if present."""
-    cfg = (ROOT / "mkdocs.yml").read_text()
+def page_slugs(project):
+    """Page URLs, from mkdocs.yml nav if present.
+
+    Commented-out nav lines are skipped. The template ships its future pages
+    commented out, so counting them would report every unwritten page as a 404
+    on a freshly scaffolded project.
+    """
+    cfg = (project / "mkdocs.yml").read_text()
     nav = re.search(r"^nav:\s*$(.*?)(?=^\S)", cfg, re.M | re.S)
     slugs = ["/"]
     if nav:
-        for m in re.finditer(r":\s*([\w./-]+\.md)\s*$", nav.group(1), re.M):
+        live = "\n".join(line for line in nav.group(1).splitlines()
+                         if not line.lstrip().startswith("#"))
+        for m in re.finditer(r":\s*([\w./-]+\.md)\s*$", live, re.M):
             f = m.group(1)
             if f == "index.md":
                 continue
@@ -136,14 +149,17 @@ def page_slugs():
 
 
 def main():
-    shots = "--shots" in sys.argv
+    name, args = split_project_arg(sys.argv[1:], ("--port",))
+    project = resolve_project(name)
+    shots = "--shots" in args
     port = DEFAULT_PORT
-    if "--port" in sys.argv:
-        port = int(sys.argv[sys.argv.index("--port") + 1])
+    if "--port" in args:
+        port = int(args[args.index("--port") + 1])
     base = f"http://127.0.0.1:{port}"
+    out = project / "screenshots"
     if shots:
-        OUT.mkdir(exist_ok=True)
-    slugs = page_slugs()
+        out.mkdir(exist_ok=True)
+    slugs = page_slugs(project)
     failures = 0
 
     with sync_playwright() as p:
@@ -157,9 +173,20 @@ def main():
             page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             page.on("pageerror", lambda e: errors.append(str(e)))
 
-            resp = page.goto(f"{base}{slug}", wait_until="load")
+            try:
+                resp = page.goto(f"{base}{slug}", wait_until="load")
+            except PlaywrightError as exc:
+                # Nothing listening is the common case, and a Playwright stack
+                # trace hides which of the two commands was forgotten.
+                ctx.close()
+                browser.close()
+                raise SystemExit(
+                    f"Cannot reach {base}{slug}: {str(exc).splitlines()[0]}\n"
+                    f"Start the site first with `pixi run serve {project.name}`, "
+                    "or pass --port N if it is on another port."
+                ) from None
             if slug == "/":
-                confirm_right_site(page, base)
+                confirm_right_site(page, base, project)
             if resp and resp.status >= 400:
                 failures += 1
                 print(f"FAIL {slug:24s} HTTP {resp.status}")
@@ -174,8 +201,8 @@ def main():
             bad = page.evaluate(SCAN_BAD_GEOMETRY)
 
             if shots:
-                name = slug.strip("/").replace("/", "_") or "index"
-                page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
+                shot = slug.strip("/").replace("/", "_") or "index"
+                page.screenshot(path=str(out / f"{shot}.png"), full_page=True)
 
             status = []
             if broken:

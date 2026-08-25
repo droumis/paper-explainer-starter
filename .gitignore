@@ -1,12 +1,22 @@
-# instantiated project files (template/ is the source of truth)
+# Instantiated project files (template/ is the source of truth). Anchored to the
+# root, so a repo that clones this one and adds paper directories keeps tracking
+# each paper's own docs/, mkdocs.yml and figures.toml.
 /docs/
 /scripts/
 /mkdocs.yml
+/figures.toml
 /pixi.toml
 /pixi.lock
 /.pixi/
-/site/
-/screenshots/
-*.pdf
+
+# Build output and scratch, at any depth, so per-paper directories are covered.
+site/
+screenshots/
+docs/assets/img/figures/pages/
 __pycache__/
+*.pyc
 .DS_Store
+
+# Papers are usually not redistributable. Cropped figures are committed, so a
+# site still builds where the PDF is absent.
+*.pdf

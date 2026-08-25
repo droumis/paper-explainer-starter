@@ -20,8 +20,18 @@ that took a long time to find.
 | `scripts/probe_pdf.py` | Reports that geometry; `--suggest` proposes crop boxes. **Run first.** |
 | `scripts/extract_figures.py` | Crops figures, refusing to write bad ones. Three checks. |
 | `scripts/check_site.py` | Drives the built site in a browser and fails on rendering problems |
+| `scripts/project.py` | Finds which paper project to act on, and loads its `figures.toml` |
+| `scripts/papers.py` | `new-paper`, `sync-assets`, and the `serve`/`build` wrappers |
 | `docs/assets/js/lib/stats.js` | Seeded RNG, Poisson sampling, linear solver, Poisson GLM by IRLS with trace, cross-validation |
 | `docs/assets/css/{distill,custom}.css` | Diagram, figure, caption and control styling |
+
+**Which paper.** Every task takes the project directory as an optional first
+argument. Omit it when the repo holds one paper, because the working directory
+is then the project. Pass it when the repo holds several: `pixi run probe
+andermann-2011 --suggest`, `pixi run verify-figures andermann-2011`. Naming
+nothing where several papers exist is an error rather than a guess, so a
+rebuild cannot silently land on the wrong site. Per-paper state is the PDF,
+`figures.toml`, `mkdocs.yml`, `docs/` and `PAPER.md`; everything else is shared.
 
 The sections below explain the judgement calls the machinery cannot make for
 you: what to crop, what to plot, how much depth to give, and how to write it.
@@ -62,10 +72,15 @@ you: what to crop, what to plot, how much depth to give, and how to write it.
 │       └── img/
 │           ├── figures/       # Cropped from paper PDF
 │           └── diagrams/      # Generated explanatory diagrams
-├── scripts/
-│   └── extract_figures.py     # PDF figure extraction
+├── scripts/                   # shared machinery, not per paper
+├── figures.toml               # crop boxes for this paper
 └── paper.pdf                  # Source paper (or symlink)
 ```
+
+A repo holding several papers keeps `pixi.toml` and `scripts/` at the root and
+gives each paper its own directory containing everything from `mkdocs.yml`
+downwards. `pixi run new-paper <name>` scaffolds one, and `pixi run sync-assets`
+pushes a shared CSS or `stats.js` fix into papers that already exist.
 
 ## pixi.toml dependencies
 
@@ -321,13 +336,11 @@ Always label reward wells, home locations, and directional arrows showing the an
 
 ## Repo setup
 
-pixi.toml tasks:
-```toml
-[tasks]
-serve = "mkdocs serve"
-build = "mkdocs build"
-extract-figures = "python scripts/extract_figures.py"
-```
+The tasks ship in `template/pixi.toml` and take an optional project directory:
+`papers`, `new-paper`, `sync-assets`, `serve`, `build`, `probe`,
+`extract-figures`, `verify-figures`, `check-refs`, `check-site`. `serve` and
+`build` are wrappers around mkdocs so that the project is named the same way for
+every command.
 
 .gitignore should include:
 ```

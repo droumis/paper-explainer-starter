@@ -2,8 +2,9 @@
 description: Audit every factual claim on the site against the paper PDF
 ---
 
-Audit this site for factual accuracy against the paper PDF in the project root,
-including its supplemental methods.
+Audit this site for factual accuracy against the paper PDF, including its
+supplemental methods. In a repo holding several papers, audit the one named in
+`$ARGUMENTS` and read the PDF and pages from that directory only.
 
 Fan the work out across sub-agents, splitting by page so each agent covers a few
 pages thoroughly. Give each agent the specific numbers to check rather than
