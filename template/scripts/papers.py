@@ -284,6 +284,16 @@ def write_record(project: Path, record: dict):
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
+def self_managed(project: Path) -> bool:
+    """True for a paper directory that is its own git repo.
+
+    Such a directory arrived as a standalone project and carries its own copy of
+    the machinery, so the shared assets here are not authoritative for it. Writing
+    into it would overwrite work the repo it belongs to is tracking.
+    """
+    return (project / ".git").exists()
+
+
 def sync_project(project: Path, force: bool = False) -> list[str]:
     """Copy the shared assets into one paper, keeping its own edits.
 
@@ -334,6 +344,9 @@ def cmd_sync_assets(args):
         raise SystemExit("No paper projects here.")
     skipped = []
     for project in targets:
+        if self_managed(project) and not name:
+            print(f"  skipping {project.name}, which is its own git repo")
+            continue
         skipped += sync_project(project, force=force)
     print("Shared assets synced. diagrams.js is per paper and was not touched.")
     if skipped:

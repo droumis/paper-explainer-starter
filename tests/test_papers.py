@@ -113,6 +113,18 @@ def main():
                                 (two / "docs/assets/js/diagrams.js").read_text()
                                 == "// mine\n"))
 
+            # A paper that is its own git repo manages its own machinery, and a
+            # sweep over every paper must not write into it.
+            (two / ".git").mkdir()
+            (two / "docs/assets/js/lib/stats.js").write_text("// theirs\n")
+            (two / papers.SYNC_RECORD).unlink(missing_ok=True)
+            papers.cmd_sync_assets([])
+            passed.append(check("a paper that is its own repo is skipped entirely",
+                                stats_of(two) == "// theirs\n"
+                                and not (two / papers.SYNC_RECORD).exists(),
+                                f"got {stats_of(two)!r}"))
+            (two / ".git").rmdir()
+
             # Scaffolding into a directory holding the PDF is the normal start.
             three = root / "paper-three"
             three.mkdir()

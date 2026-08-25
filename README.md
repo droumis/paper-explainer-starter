@@ -110,7 +110,9 @@ and `docs/`, and builds its own independent site. `pixi run sync-assets` pushes 
 shared CSS or `stats.js` improvement from `template/` into papers that already
 exist, leaving each paper's `diagrams.js` alone. A shared file that a paper has
 edited is reported and skipped rather than overwritten, since that edit is
-usually a lesson that belongs upstream.
+usually a lesson that belongs upstream. A paper directory that is its own git
+repo is skipped entirely, so a standalone project parked inside the repo keeps
+managing its own machinery.
 
 ## What you get
 
