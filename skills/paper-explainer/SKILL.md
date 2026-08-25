@@ -22,7 +22,7 @@ that took a long time to find.
 | `scripts/check_site.py` | Drives the built site in a browser and fails on rendering problems |
 | `scripts/project.py` | Finds which paper project to act on, and loads its `figures.toml` |
 | `scripts/papers.py` | `new-paper`, `sync-assets`, and the `serve`/`build` wrappers |
-| `docs/assets/js/lib/stats.js` | Seeded RNG, Poisson sampling, linear solver, Poisson GLM by IRLS with trace, cross-validation |
+| `docs/assets/js/lib/stats.js` | Seeded RNG, Poisson sampling, linear solver, Poisson GLM by IRLS with trace, cross-validation, nonlinear least squares (Levenberg-Marquardt), two-class LDA |
 | `docs/assets/css/{distill,custom}.css` | Diagram, figure, caption and control styling |
 
 **Which paper.** Every task takes the project directory as an optional first
@@ -175,7 +175,7 @@ otherwise waste hours:
 On a real paper the suggestions failed the panel-label check on every page,
 because panel letters are *text* and the suggestion unioned only *graphics*.
 Both are now unioned, but the general lesson holds: run `--verify` and expect
-the checks to reject the first attempt. A suggestion that passes all three
+the checks to reject the first attempt. A suggestion that passes every check
 checks on the first try is the exception.
 
 ### Anatomical direction markers look exactly like panel labels
@@ -203,18 +203,21 @@ Also exclude the page-background rect, the running header/footer, and full-width
 
 ### The extraction script is already self-checking
 
-`scripts/extract_figures.py` gates every write on three checks. Do not weaken
-them, and do add to `CHECKS` if you find a fourth class of bad crop:
+`scripts/extract_figures.py` gates every write on four checks. Do not weaken
+them, and do add to `CHECKS` if you find a fifth class of bad crop:
 
 - **No prose inside the crop.** Catches journal logos, caption text, bled-in
   body columns.
-- **No content clipped or stranded.** Catches truncated panels, and content
+- **No drawing clipped or stranded.** Catches truncated panels, and content
   falling in the gap between two crops of the same page.
+- **No figure text sliced or stranded.** The drawing checks cannot see an axis
+  label, a tick label or an orientation marker, so a crop can cut a word in half
+  and no caption care will repair it.
 - **Every panel label inside some crop.** Direct guard against a caption
   describing a panel the reader cannot see.
 
 Confirm the checks bite before trusting them: set a box to a whole page
-temporarily and watch all three complain. A check you have never seen fail is a
+temporarily and watch them complain. A check you have never seen fail is a
 check you cannot rely on.
 
 ### One crop per claim

@@ -144,12 +144,15 @@ managing its own machinery.
   layouts, and zero-thickness rects being invisible to intersection tests.
 - `probe_pdf.py` reports that geometry so crop boxes can be derived instead of
   guessed. Run it first.
-- `extract_figures.py` crops figures and **refuses to write bad ones**. Three
-  checks: no prose inside a crop, no content clipped or stranded between crops,
-  every panel label inside some crop.
+- `extract_figures.py` crops figures and **refuses to write bad ones**. Four
+  checks: no prose inside a crop, no drawing clipped or stranded between crops,
+  no axis or tick label sliced or stranded, every panel label inside some crop.
 - `check_site.py` drives the built site in a browser: opens disclosures,
   exercises every control, scans for non-finite SVG geometry, counts genuinely
-  broken images, reports console errors.
+  broken images, reports console errors. It also checks the layout at the low,
+  middle and high setting of every control, since a label placed from a data
+  domain can land outside the viewBox, where it is invisible, or on top of
+  another label, where both are unreadable.
 - `project.py` decides which paper a command acts on, and loads that paper's
   `figures.toml`. Every malformed crop entry is reported at once, with the key
   named, rather than one per run.
@@ -159,16 +162,17 @@ managing its own machinery.
 
 `template/docs/assets/js/lib/stats.js` is paper-agnostic statistics: seeded RNG,
 Poisson sampling, a linear solver, a Poisson GLM fitted by IRLS with an optional
-per-iteration trace, and repeated-split cross-validation against a shuffled
-baseline. It exists so a diagram can do real estimation rather than revealing
+per-iteration trace, repeated-split cross-validation against a shuffled
+baseline, nonlinear least squares by Levenberg-Marquardt with a numeric Jacobian
+for models that are not GLMs, and two-class linear discriminant analysis. It exists so a diagram can do real estimation rather than revealing
 the parameters it generated its own data from.
 
 ## Tests and CI
 
 ```bash
-node tests/test_stats.cjs                                       # 39 checks
+node tests/test_stats.cjs                                       # 54 checks
 pixi run --manifest-path template/pixi.toml \
-  python tests/test_pdf_geometry.py                             # 44 checks
+  python tests/test_pdf_geometry.py                             # 48 checks
 pixi run --manifest-path template/pixi.toml \
   python tests/test_papers.py                                   # 11 checks
 ```
@@ -184,8 +188,8 @@ three things that make naive PDF geometry wrong, so it needs no real paper:
 - a **two-column layout** where the body text is indented around the figure
 - **zero-thickness** axis lines and tick marks
 
-It then asserts that a box produced by `suggest_crop` passes all three crop
-checks, and that boxes which swallow prose, clip content, strand content between
+It then asserts that a box produced by `suggest_crop` passes every crop
+check, and that boxes which swallow prose, clip content, strand content between
 crops, or omit a panel label are each rejected.
 
 `tests/test_stats.cjs` checks the statistics: that the RNG is reproducible and

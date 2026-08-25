@@ -24,11 +24,20 @@ from pathlib import Path
 
 import fitz
 
-# A text block counts as prose (caption or body copy) only if it has at least
-# this many words AND is wider than PROSE_MIN_WIDTH. The width test excludes
-# rotated axis labels, which are narrow, word-rich, and part of the figure.
+# A text block counts as prose (caption or body copy) only if it holds at least
+# this many word-like tokens AND is wider than PROSE_MIN_WIDTH. The width test
+# excludes rotated axis labels, which are narrow, word-rich, and part of the
+# figure.
 PROSE_WORD_COUNT = 12
 PROSE_MIN_WIDTH = 60.0
+
+# Only tokens this long, and alphabetic once punctuation is stripped, count
+# towards PROSE_WORD_COUNT. Without this, a row of short axis tick labels
+# spanning a wide figure ("V1 AL PM" repeated per subpanel, or a row of numeric
+# ticks) is one wide block of many "words" and gets classified as prose, which
+# then rejects every crop box that correctly includes those labels.
+PROSE_MIN_WORD_LEN = 3
+_PUNCTUATION = "()[].,;:!?\"'`-\u2013\u2014"
 
 # Zero-thickness rects (axis lines, rules, ticks) are real figure content, but
 # intersection tests ignore empty rects. Give each degenerate axis this much
@@ -64,12 +73,26 @@ def find_pdf(root: Path) -> Path:
     return pdfs[0]
 
 
+def word_like(text):
+    """Count tokens that only running prose plausibly contains.
+
+    Axis tick labels are short ("V1", "PM", "0.32", "24"), so counting raw
+    whitespace-separated tokens makes a row of them look like a sentence.
+    """
+    count = 0
+    for token in text.split():
+        stripped = token.strip(_PUNCTUATION)
+        if len(stripped) >= PROSE_MIN_WORD_LEN and stripped.isalpha():
+            count += 1
+    return count
+
+
 def prose_words(page):
     """Yield (rect, text) for every word belonging to a prose text block."""
     prose_blocks = set()
     for block in page.get_text("blocks"):
         x0, _, x1, _, text, block_no = block[0], block[1], block[2], block[3], block[4], block[5]
-        if len(text.split()) >= PROSE_WORD_COUNT and (x1 - x0) >= PROSE_MIN_WIDTH:
+        if word_like(text) >= PROSE_WORD_COUNT and (x1 - x0) >= PROSE_MIN_WIDTH:
             prose_blocks.add(block_no)
     for word in page.get_text("words"):
         x0, y0, x1, y1, text, block_no = word[0], word[1], word[2], word[3], word[4], word[5]
@@ -176,6 +199,26 @@ def suggest_crop(page, y0=None, y1=None, pad=3.0):
     content = fitz.Rect(parts[0])
     for r in parts[1:]:
         content |= r
+
+    # Grow to swallow whole any figure text the box already touches: axis
+    # labels, tick labels, orientation markers. Only text that already
+    # intersects counts, so a section heading elsewhere on the page cannot drag
+    # the box into the body column. Growing can touch new words, so iterate to
+    # a fixed point under a cap.
+    prose = [r for r, _ in prose_words(page)]
+    figure_text = [
+        fitz.Rect(w[:4]) for w in page.get_text("words")
+        if HEADER_Y <= w[1] and w[3] <= FOOTER_Y
+        and not any(fitz.Rect(w[:4]).intersects(p) for p in prose)
+    ]
+    for _ in range(8):
+        grown = fitz.Rect(content)
+        for wrect in figure_text:
+            if content.intersects(wrect):
+                grown |= wrect
+        if grown == content:
+            break
+        content = grown
 
     box = fitz.Rect(content)
     box.x0 -= pad

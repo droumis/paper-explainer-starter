@@ -17,6 +17,7 @@ const code = fs.readFileSync(LIB, "utf8");
 const M = new Function(
   code + "\n return {makeRNG, poissonSample, solveLinear, fitPoissonGLM," +
          " crossValidatedImprovement, pickSubset, logFactorial," +
+         " fitLeastSquares, fitLDA," +
          " BETA_POS, BETA_NEG, BETA_ZERO};"
 )();
 
@@ -208,6 +209,82 @@ console.log("\npickSubset");
   check("selects uniformly", spread < 0.05, `spread ${(spread * 100).toFixed(1)}%`);
   check("k = n returns everything",
     M.pickSubset(4, 4, r).sort().join() === "0,1,2,3");
+}
+
+// ------------------------------------------------------- nonlinear least squares
+console.log("\nfitLeastSquares");
+{
+  // A Gaussian tuning curve, the shape a speed or frequency tuning fit takes.
+  const truth = [8, 20, 6, 1];          // peak, centre, width, baseline
+  const gauss = (p, x) =>
+    p[3] + p[0] * Math.exp(-0.5 * Math.pow((x - p[1]) / p[2], 2));
+  const rng = M.makeRNG(7);
+  const xs = [];
+  for (let x = 2; x <= 40; x += 1) xs.push(x);
+  const clean = xs.map(x => gauss(truth, x));
+  const noisy = clean.map(v => v + (rng() - 0.5) * 0.4);
+
+  const exact = M.fitLeastSquares(gauss, [3, 12, 12, 0], xs, clean);
+  check("converges on noiseless data", exact.converged, exact.reason || "");
+  const err = Math.max(...truth.map((t, j) => Math.abs(exact.params[j] - t) / Math.abs(t)));
+  check("recovers the generating parameters", err < 0.02,
+    `worst relative error ${(err * 100).toFixed(2)}%`);
+
+  const fit = M.fitLeastSquares(gauss, [3, 12, 12, 0], xs, noisy);
+  check("converges from a cold start on noisy data", fit.converged, fit.reason || "");
+  check("centre is recovered within a tenth of the width",
+    Math.abs(fit.params[1] - truth[1]) < truth[2] / 10,
+    `got ${fit.params[1].toFixed(2)} for ${truth[1]}`);
+  check("residual sum of squares falls below the starting value",
+    fit.rss < M.fitLeastSquares(gauss, [3, 12, 12, 0], xs, noisy, { maxIter: 0 }).rss);
+
+  // The guards that keep a Fit button from drawing nonsense.
+  const under = M.fitLeastSquares(gauss, [3, 12, 12, 0], [1, 2], [1, 2]);
+  check("refuses a fit with fewer points than parameters",
+    !under.converged && under.reason === "underdetermined", under.reason);
+  const empty = M.fitLeastSquares(gauss, [3, 12, 12, 0], [], []);
+  check("refuses an empty dataset", !empty.converged && empty.reason === "nodata");
+  const bad = M.fitLeastSquares(() => NaN, [1], xs, clean);
+  check("reports a model that returns non-finite values",
+    !bad.converged, bad.reason);
+
+  // Bounds keep the search out of regions where the model is undefined.
+  const bounded = M.fitLeastSquares(gauss, [3, 12, 12, 0], xs, noisy,
+    { bounds: [null, null, [4, 8], null] });
+  check("respects a bound on a parameter",
+    bounded.params[2] >= 4 - 1e-9 && bounded.params[2] <= 8 + 1e-9,
+    `width ${bounded.params[2].toFixed(2)}`);
+}
+
+// ----------------------------------------------------------------------- LDA
+console.log("\nfitLDA");
+{
+  const rng = M.makeRNG(11);
+  const gauss2 = (cx, cy) => [cx + (rng() - 0.5) * 2, cy + (rng() - 0.5) * 2];
+  const A = [], B = [];
+  for (let i = 0; i < 60; i++) { A.push(gauss2(0, 0)); B.push(gauss2(4, 4)); }
+  const lda = M.fitLDA(A, B);
+  check("separates two well-spaced clouds", lda && lda.accuracy > 0.95,
+    lda ? lda.accuracy.toFixed(2) : "null");
+  check("assigns class A to the positive side",
+    lda.projectedA.filter(v => v > 0).length > lda.projectedA.length * 0.9);
+  check("the boundary sits between the class means",
+    lda.meanA.every((v, j) => Math.abs(v - 0) < 0.5) &&
+    lda.meanB.every((v, j) => Math.abs(v - 4) < 0.5));
+
+  // Identical clouds cannot be separated, and resubstitution accuracy must not
+  // pretend otherwise.
+  const C = [], D = [];
+  for (let i = 0; i < 60; i++) { C.push(gauss2(0, 0)); D.push(gauss2(0, 0)); }
+  const chance = M.fitLDA(C, D);
+  check("scores near chance on inseparable clouds",
+    chance === null || Math.abs(chance.accuracy - 0.5) < 0.15,
+    chance ? chance.accuracy.toFixed(2) : "null");
+
+  check("returns null for a class with one member",
+    M.fitLDA([[0, 0]], B) === null);
+  check("returns null when the points are collinear",
+    M.fitLDA([[0, 0], [1, 1], [2, 2]], [[3, 3], [4, 4], [5, 5]]) === null);
 }
 
 console.log(`\n${passed}/${passed + failed} checks passed`);

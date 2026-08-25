@@ -73,7 +73,7 @@ pixi run extract-figures
 
 Split any figure whose panels belong on different site pages. Do not hand-tune
 boxes without re-running the checks. Confirm the checks bite by temporarily
-setting a box to a whole page and watching all three complain.
+setting a box to a whole page and watching every check complain.
 
 ### 3. Plan the pages
 

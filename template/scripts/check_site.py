@@ -5,6 +5,10 @@ Discovers pages from mkdocs.yml, then for each page:
   - opens every collapsed <details>, since Playwright cannot drive a hidden
     control and optional depth usually lives behind a disclosure
   - checks every diagram container actually rendered something
+  - checks every label sits inside its own viewBox and clear of other labels, at
+    the low, middle and high setting of every slider
+  - checks each viewBox is the size its diagram actually draws, since the height
+    lives in the markup and the layout maths lives in the JS, and the two drift
   - exercises every button, slider and select it can find
   - re-checks for non-finite SVG geometry, which is how a scale computed from
     empty data silently destroys a panel
@@ -35,6 +39,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 from project import resolve_project, split_project_arg  # noqa: E402
 
 DEFAULT_PORT = 8000
+
+# Layout thresholds. A diagram may legitimately leave some blank space, so only
+# flag a viewBox that is mostly empty: that is the signature of the markup and
+# the JS layout constants having drifted apart.
+MIN_VIEWBOX_FILL = 0.80
+# Slack in viewBox units before a label counts as outside the box.
+LABEL_PAD = 1.0
+# Two labels overlap meaningfully once the intersection covers this much of the
+# smaller one. Below this, descenders and kerning raise false alarms.
+LABEL_OVERLAP_FRAC = 0.22
+# Control settings to test the layout at. Labels move with the data. Sliders go
+# to their low, middle and high value; a select takes its first, middle and last
+# option, so a diagram with a three-way mode select is checked in all three.
+LAYOUT_MODES = ("mid", "min", "max")
 
 # A lazy image that has not loaded is not broken. Only zero intrinsic width
 # after loading settles counts as a real failure.
@@ -93,6 +111,111 @@ EXERCISE_CONTROLS = """
       return log;
     }
 """
+
+# Two silent layout failures, neither of which a build step or a screenshot
+# glance reliably catches.
+#
+# A label positioned from a data domain can land outside the viewBox, where it is
+# simply invisible, or on top of another label, where both become unreadable.
+# Both depend on control settings, so this runs at several settings.
+#
+# Separately, the viewBox lives in the markdown and the layout coordinates live
+# in the JS. Change one and forget the other and the diagram either loses its
+# bottom edge or ships a slab of blank space. Comparing the drawn content's
+# extent against the declared viewBox catches both directions.
+CHECK_LAYOUT = """
+    async (opts) => {
+      const { mode, minFill, pad, overlapFrac } = opts;
+      document.querySelectorAll('details').forEach(d => { d.open = true; });
+      for (const c of document.querySelectorAll('.vis-container')) {
+        for (const el of c.querySelectorAll('input[type=range]')) {
+          const lo = +el.min || 0, hi = +el.max || 100;
+          el.value = mode === 'min' ? lo : mode === 'max' ? hi : (lo + hi) / 2;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        // A select changes the layout as much as a slider does, and a diagram
+        // whose modes add or move labels is only checked in the mode that
+        // happens to be selected by default unless the options are swept too.
+        for (const el of c.querySelectorAll('select')) {
+          const opts = [...el.options];
+          if (!opts.length) continue;
+          const pick = mode === 'min' ? 0
+            : mode === 'max' ? opts.length - 1
+            : Math.floor((opts.length - 1) / 2);
+          el.value = opts[pick].value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+      await new Promise(r => setTimeout(r, 350));
+
+      const out = [];
+      for (const c of document.querySelectorAll('.vis-container')) {
+        const svg = c.querySelector('svg');
+        if (!svg || !svg.viewBox || !svg.viewBox.baseVal) continue;
+        const vb = svg.viewBox.baseVal;
+        if (!vb.width || !vb.height) continue;
+        const sr = svg.getBoundingClientRect();
+        if (!sr.width || !sr.height) continue;
+        const kx = sr.width / vb.width, ky = sr.height / vb.height;
+        const toVB = (r) => ({
+          left: (r.left - sr.left) / kx, right: (r.right - sr.left) / kx,
+          top: (r.top - sr.top) / ky, bottom: (r.bottom - sr.top) / ky,
+        });
+
+        const escaped = [];
+        const texts = [...svg.querySelectorAll('text')]
+          .filter(t => (t.textContent || '').trim());
+        for (const t of texts) {
+          const raw = t.getBoundingClientRect();
+          if (!raw.width) continue;
+          const b = toVB(raw);
+          if (b.left < -pad || b.right > vb.width + pad ||
+              b.top < -pad || b.bottom > vb.height + pad) {
+            escaped.push(t.textContent.trim().slice(0, 30));
+          }
+        }
+
+        const overlaps = [];
+        const boxes = texts.map(t => [t, t.getBoundingClientRect()])
+          .filter(b => b[1].width > 0);
+        for (let i = 0; i < boxes.length; i++) {
+          for (let j = i + 1; j < boxes.length; j++) {
+            const a = boxes[i][1], b = boxes[j][1];
+            const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            if (ix <= 3 || iy <= 3) continue;
+            const smaller = Math.min(a.width * a.height, b.width * b.height);
+            if (smaller > 0 && (ix * iy) / smaller > overlapFrac) {
+              overlaps.push(boxes[i][0].textContent.trim().slice(0, 22) + ' / ' +
+                            boxes[j][0].textContent.trim().slice(0, 22));
+            }
+          }
+        }
+
+        // Extent actually drawn, from every rendered child.
+        let lo = Infinity, hi = -Infinity;
+        for (const el of svg.querySelectorAll('*')) {
+          if (el.tagName === 'defs' || el.closest('defs')) continue;
+          let raw;
+          try { raw = el.getBoundingClientRect(); } catch (e) { continue; }
+          if (!raw.width && !raw.height) continue;
+          const b = toVB(raw);
+          if (!isFinite(b.top) || !isFinite(b.bottom)) continue;
+          lo = Math.min(lo, b.top);
+          hi = Math.max(hi, b.bottom);
+        }
+        const fill = isFinite(hi) ? (hi - Math.max(0, lo)) / vb.height : 1;
+        out.push({
+          id: c.id, vbH: Math.round(vb.height),
+          drawn: isFinite(hi) ? Math.round(hi) : null,
+          fill: Math.round(fill * 100) / 100,
+          slack: fill < minFill, escaped, overlaps: overlaps.slice(0, 4),
+        });
+      }
+      return out;
+    }
+"""
+
 
 RENDERED_CONTAINERS = """
     () => [...document.querySelectorAll('.vis-container')].map(c => {
@@ -197,6 +320,27 @@ def main():
             containers = page.evaluate(RENDERED_CONTAINERS)
             empty = [c["id"] for c in containers if c["nodes"] <= 0]
             broken = page.evaluate(COUNT_BROKEN_IMAGES)
+
+            layout = []
+            for mode in LAYOUT_MODES:
+                for d in page.evaluate(CHECK_LAYOUT, {
+                    "mode": mode, "minFill": MIN_VIEWBOX_FILL,
+                    "pad": LABEL_PAD, "overlapFrac": LABEL_OVERLAP_FRAC,
+                }):
+                    if d["escaped"]:
+                        layout.append(f"{d['id']} [{mode}] label outside viewBox: "
+                                      f"{d['escaped'][0]!r}")
+                    if d["overlaps"]:
+                        layout.append(f"{d['id']} [{mode}] labels overlap: "
+                                      f"{d['overlaps'][0]}")
+                    # Only report slack once, since it does not vary with controls
+                    # in any interesting way and would otherwise triple.
+                    if d["slack"] and mode == LAYOUT_MODES[0]:
+                        layout.append(
+                            f"{d['id']} draws to y={d['drawn']} of a "
+                            f"{d['vbH']} viewBox ({int(d['fill'] * 100)}% used); "
+                            f"the markup height and the JS layout have drifted")
+
             page.evaluate(EXERCISE_CONTROLS)
             bad = page.evaluate(SCAN_BAD_GEOMETRY)
 
@@ -211,12 +355,16 @@ def main():
                 status.append(f"empty diagrams: {','.join(empty)}")
             if bad:
                 status.append(f"{len(bad)} non-finite geometry ({bad[0]})")
+            if layout:
+                status.append(f"{len(layout)} layout problems")
             if errors:
                 status.append(f"{len(errors)} console errors: {errors[0][:70]}")
 
             if status:
                 failures += 1
                 print(f"FAIL {slug:24s} {'; '.join(status)}")
+                for problem in layout:
+                    print(f"       {problem}")
             else:
                 print(f"ok   {slug:24s} {len(containers)} diagrams, no errors")
             ctx.close()

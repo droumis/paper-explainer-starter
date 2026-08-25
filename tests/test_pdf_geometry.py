@@ -37,6 +37,20 @@ CLIP_BAND_H = 50
 CLIP_VISIBLE_W = 160          # clip stops the fill here
 CLIP_FILL_W = 360             # the fill's own width, reaching into the body
 
+# A row of short axis tick labels, the width of the figure. Thirteen
+# whitespace-separated tokens, so a naive word count classifies the row as prose
+# and then rejects every crop that correctly contains it. It also extends past
+# the drawings' own right edge, so a crop derived from graphics alone cuts it.
+TICKS = "V1 AL PM LM RL A1 S1 M2 AM LI POR PPC MM"
+TICKS_X0 = 95.0
+TICKS_BASELINE = 405.0
+
+# One more label, straddling the right edge of the drawings at x=370. A box
+# derived from graphics alone cuts it in half, so it exercises both the growth
+# step in suggest_crop and the figure-text check.
+EDGE_LABEL = "RSPd"
+EDGE_X0 = 360.0
+
 
 def build_fixture(path: Path):
     doc = fitz.open()
@@ -70,6 +84,10 @@ def build_fixture(path: Path):
 
     # An anatomical orientation marker, which looks exactly like a panel label.
     page.insert_text((330, 170), "M", fontsize=8)
+
+    # Axis tick labels: figure content that is text, not drawing.
+    page.insert_text((TICKS_X0, TICKS_BASELINE), TICKS, fontsize=7)
+    page.insert_text((EDGE_X0, TICKS_BASELINE), EDGE_LABEL, fontsize=7)
 
     # Caption: prose, must never end up inside a crop.
     caption = ("Figure 1. A synthetic figure used for testing. (A) The upper "
@@ -252,6 +270,13 @@ def main():
         label_rects and not any(label_rects[0].intersects(pr) for pr in prose_rects),
         "note: 'A' also appears as a caption word, so this must be positional"))
 
+    tick_tokens = set(TICKS.split())
+    passed.append(check(
+        "a row of short axis tick labels is not classified as prose",
+        not (texts & tick_tokens),
+        f"leaked {sorted(texts & tick_tokens)[:4]}; a crop containing the axis "
+        "would then be rejected"))
+
     print("\npanel labels")
     labels = {t for _, t in G.panel_labels(page)}
     passed.append(check("finds A and B", {"A", "B"} <= labels, f"got {labels}"))
@@ -292,6 +317,16 @@ def main():
         overlaps = [t for r, t in words if box.intersects(r)]
         passed.append(check("box excludes all prose", not overlaps,
                             f"swallowed {overlaps[:3]}"))
+        # The label straddles the drawings' right edge, so a box unioned from
+        # graphics alone would slice it. Growth has to swallow it whole.
+        edge = [r for r, t in
+                ((fitz.Rect(w[:4]), w[4]) for w in page.get_text("words"))
+                if t == EDGE_LABEL]
+        passed.append(check(
+            "box grows to contain a label straddling the drawings' edge",
+            edge and box.contains(edge[0]),
+            f"box.x1={box.x1:.0f}, label ends at "
+            f"{edge[0].x1:.0f}" if edge else "label missing"))
 
     doc.close()
 
@@ -309,11 +344,11 @@ def main():
         return result, buf.getvalue()
 
     # Assert the end-to-end property that matters: a box produced by
-    # suggest_crop must satisfy all three checks. On a real paper the first
+    # suggest_crop must satisfy every check. On a real paper the first
     # version of suggest_crop failed the panel-label check on every page, which
     # is exactly the regression this guards.
     ok, out = run({"fig": (0, box)})
-    passed.append(check("a box from suggest_crop passes all three", ok,
+    passed.append(check("a box from suggest_crop passes every check", ok,
                         out.strip().splitlines()[-1] if not ok else ""))
 
     ok, out = run({"fig": (0, fitz.Rect(56, 106, 560, 520))})
@@ -336,6 +371,19 @@ def main():
     ok, out = run({})
     passed.append(check("an empty figures.toml is rejected, not vacuously passed",
                         not ok and "nothing to verify" in out))
+
+    # The figure's own text, which the drawing-based checks cannot see. A crop
+    # that stops at the drawings' edge cuts the straddling label in half, and the
+    # rendered figure then shows half a word.
+    ok, out = run({"fig": (0, fitz.Rect(56, 106, 372, 424))})
+    passed.append(check("a crop slicing an axis label is rejected",
+                        not ok and "slices figure text" in out,
+                        out.strip().splitlines()[-1] if out else ""))
+    ok, out = run({"top": (0, fitz.Rect(56, 106, 384, 396)),
+                   "bot": (0, fitz.Rect(56, 409, 384, 424))})
+    passed.append(check("figure text stranded between two crops is rejected",
+                        not ok and "falls between crops" in out,
+                        out.strip().splitlines()[-1] if out else ""))
 
     passed.extend(check_project_module())
 

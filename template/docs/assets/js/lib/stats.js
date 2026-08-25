@@ -221,6 +221,207 @@ function crossValidatedImprovement(X, y, repeats, rng) {
 
 
 /**
+ * Fit an arbitrary nonlinear model by least squares, using Gauss-Newton with
+ * Levenberg-Marquardt damping and a numeric Jacobian.
+ *
+ * For papers whose model is not a GLM. A Gaussian tuning surface, a saturating
+ * contrast response, a power law: any `predict(params, x) -> number`. The
+ * Jacobian is taken by central differences, so callers supply no derivatives.
+ *
+ * Damping matters. Undamped Gauss-Newton diverges readily from a cold start on
+ * a model with a curved parameter space, and a diagram whose Fit button
+ * sometimes explodes is worse than no Fit button. Each pass tries a step; if
+ * the residual sum of squares fails to fall, lambda rises and the step is
+ * retried, which is what makes convergence dependable enough to put behind a
+ * slider.
+ *
+ * `bounds` is an optional array of [lo, hi] per parameter, clamped after each
+ * accepted step. Use it to keep a width positive rather than letting the search
+ * wander into a region where the model returns NaN.
+ *
+ * Returns { params, rss, iterations, converged, reason }. Callers MUST check
+ * `converged` and draw nothing when it is false: coefficients from a fit that
+ * never settled are not estimates.
+ */
+function fitLeastSquares(predict, params0, xs, ys, opts = {}) {
+  const maxIter = opts.maxIter === undefined ? 200 : opts.maxIter;
+  const tol = opts.tol === undefined ? 1e-10 : opts.tol;
+  const bounds = opts.bounds || null;
+  const p = params0.length;
+  const n = xs.length;
+
+  if (!n || !p) {
+    return { params: [...params0], rss: NaN, iterations: 0, converged: false, reason: "nodata" };
+  }
+  // More parameters than observations cannot be identified. Refusing here is
+  // the same guard fitPoissonGLM applies, and it is reachable from a slider
+  // that shrinks the sample.
+  if (n < p) {
+    return { params: [...params0], rss: NaN, iterations: 0, converged: false,
+             reason: "underdetermined" };
+  }
+
+  const clamp = (v, j) => {
+    if (!bounds || !bounds[j]) return v;
+    return Math.min(bounds[j][1], Math.max(bounds[j][0], v));
+  };
+
+  const sumSq = (params) => {
+    let s = 0;
+    for (let i = 0; i < n; i++) {
+      const r = ys[i] - predict(params, xs[i]);
+      if (!isFinite(r)) return Infinity;
+      s += r * r;
+    }
+    return s;
+  };
+
+  let params = params0.map(clamp);
+  let rss = sumSq(params);
+  if (!isFinite(rss)) {
+    return { params, rss, iterations: 0, converged: false, reason: "badstart" };
+  }
+  let lambda = 1e-3;
+  let iterations = 0;
+
+  for (let iter = 1; iter <= maxIter; iter++) {
+    iterations = iter;
+
+    // Central-difference Jacobian. The step is scaled to each parameter so a
+    // width of 0.5 and a peak of 40 both get a sensible perturbation.
+    const J = [];
+    const resid = [];
+    const h = params.map(v => Math.max(1e-6, Math.abs(v) * 1e-5));
+    for (let i = 0; i < n; i++) {
+      const base = predict(params, xs[i]);
+      if (!isFinite(base)) {
+        return { params, rss, iterations, converged: false, reason: "nonfinite" };
+      }
+      resid.push(ys[i] - base);
+      const row = new Array(p);
+      for (let j = 0; j < p; j++) {
+        const up = [...params], dn = [...params];
+        up[j] += h[j]; dn[j] -= h[j];
+        const d = (predict(up, xs[i]) - predict(dn, xs[i])) / (2 * h[j]);
+        row[j] = isFinite(d) ? d : 0;
+      }
+      J.push(row);
+    }
+
+    // Normal equations J'J delta = J'r, with lambda on the diagonal.
+    const JtJ = Array.from({ length: p }, () => new Array(p).fill(0));
+    const Jtr = new Array(p).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < p; j++) {
+        Jtr[j] += J[i][j] * resid[i];
+        for (let k = j; k < p; k++) JtJ[j][k] += J[i][j] * J[i][k];
+      }
+    }
+    for (let j = 0; j < p; j++) {
+      for (let k = 0; k < j; k++) JtJ[j][k] = JtJ[k][j];
+    }
+
+    let accepted = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const A = JtJ.map((row, j) => row.map((v, k) => (j === k ? v * (1 + lambda) : v)));
+      const delta = solveLinear(A, Jtr);
+      if (delta && delta.every(isFinite)) {
+        const trial = params.map((v, j) => clamp(v + delta[j], j));
+        const trialRss = sumSq(trial);
+        if (trialRss < rss) {
+          const moved = Math.max(...trial.map((v, j) => Math.abs(v - params[j])));
+          const gained = rss - trialRss;
+          params = trial;
+          rss = trialRss;
+          lambda = Math.max(1e-12, lambda / 3);
+          accepted = true;
+          if (moved < tol || gained < tol * Math.max(1, rss)) {
+            return { params, rss, iterations, converged: true, reason: null };
+          }
+          break;
+        }
+      }
+      lambda *= 5;
+      if (lambda > 1e12) break;
+    }
+    if (!accepted) {
+      // No downhill step exists at any damping: either a minimum to numeric
+      // precision, or a singular Jacobian. Distinguish by residual gradient.
+      const grad = Math.max(...Jtr.map(Math.abs));
+      return { params, rss, iterations, converged: grad < 1e-6,
+               reason: grad < 1e-6 ? null : "stalled" };
+    }
+  }
+  return { params, rss, iterations, converged: false, reason: "maxiter" };
+}
+
+
+/**
+ * Two-class linear discriminant analysis on d-dimensional points.
+ *
+ * Finds the direction w that best separates two clouds by maximising the
+ * between-class distance relative to the within-class scatter, which for two
+ * classes is w = S^-1 (mu_a - mu_b) with S the pooled covariance. The boundary
+ * is placed where the two projected class means are equidistant.
+ *
+ * Returns { w, b, accuracy, ... } where a point x is assigned to class A when
+ * w . x + b > 0, or null when the pooled covariance is singular, which happens
+ * when a class has one member or the points are collinear.
+ *
+ * `accuracy` is resubstitution accuracy on the same points used to fit, which
+ * is what a paper reporting "classification accuracy" for a descriptive
+ * boundary usually means. It is optimistic; say so wherever it is displayed.
+ */
+function fitLDA(pointsA, pointsB) {
+  const na = pointsA.length, nb = pointsB.length;
+  if (na < 2 || nb < 2) return null;
+  const d = pointsA[0].length;
+  if (!d || pointsB[0].length !== d) return null;
+
+  const mean = (pts) => {
+    const m = new Array(d).fill(0);
+    pts.forEach(p => { for (let j = 0; j < d; j++) m[j] += p[j] / pts.length; });
+    return m;
+  };
+  const ma = mean(pointsA), mb = mean(pointsB);
+
+  // Pooled within-class scatter, divided by the pooled degrees of freedom.
+  const S = Array.from({ length: d }, () => new Array(d).fill(0));
+  const accumulate = (pts, m) => {
+    pts.forEach(p => {
+      for (let j = 0; j < d; j++) {
+        for (let k = 0; k < d; k++) S[j][k] += (p[j] - m[j]) * (p[k] - m[k]);
+      }
+    });
+  };
+  accumulate(pointsA, ma);
+  accumulate(pointsB, mb);
+  const df = na + nb - 2;
+  for (let j = 0; j < d; j++) for (let k = 0; k < d; k++) S[j][k] /= df;
+
+  const w = solveLinear(S, ma.map((v, j) => v - mb[j]));
+  if (!w || !w.every(isFinite)) return null;
+  const norm = Math.sqrt(w.reduce((s, v) => s + v * v, 0));
+  if (!(norm > 1e-12)) return null;
+
+  const project = (p) => p.reduce((s, v, j) => s + v * w[j], 0);
+  const b = -(project(ma) + project(mb)) / 2;
+
+  let correct = 0;
+  pointsA.forEach(p => { if (project(p) + b > 0) correct++; });
+  pointsB.forEach(p => { if (project(p) + b <= 0) correct++; });
+
+  return {
+    w, b,
+    accuracy: correct / (na + nb),
+    meanA: ma, meanB: mb,
+    projectedA: pointsA.map(p => project(p) + b),
+    projectedB: pointsB.map(p => project(p) + b),
+  };
+}
+
+
+/**
  * Pick `k` distinct indices out of `n`, unbiased (Fisher-Yates prefix).
  * Used for subsampling predictors when sweeping ensemble size.
  */

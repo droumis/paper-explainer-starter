@@ -17,12 +17,14 @@ Three checks gate every write, and they exist because each corresponds to a
 class of bug that otherwise ships silently:
 
   verify_crops         no caption or body prose inside a crop
-  verify_coverage      no figure content clipped, and none stranded between
+  verify_coverage      no figure graphic clipped, and none stranded between
                        two crops on the same page
+  verify_figure_text   same, for the figure's own text: axis labels, tick
+                       labels and orientation markers
   verify_panel_labels  every panel label lands inside some crop
 
 Confirm the checks actually bite before trusting them: temporarily set a box to
-something obviously wrong (a whole page, say) and watch all three complain.
+something obviously wrong (a whole page, say) and watch them complain.
 """
 
 import re
@@ -33,6 +35,8 @@ import fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_geometry import (  # noqa: E402
+    FOOTER_Y,
+    HEADER_Y,
     figure_graphics,
     panel_labels,
     prose_words,
@@ -135,6 +139,58 @@ def verify_coverage(paper):
     return True
 
 
+def verify_figure_text(paper):
+    """No crop may slice through the figure's own text, or strand it.
+
+    `verify_coverage` looks at drawings and images, so an axis label, a tick
+    label or an anatomical orientation marker can be sliced in half without any
+    check objecting. The rendered crop then shows half a word, which no amount
+    of caption care can repair.
+
+    Scoped to text intersecting the union of a page's crops, so section headings
+    and running heads elsewhere on the page raise no false alarms.
+    """
+    doc = fitz.open(str(paper.pdf))
+    problems = []
+    for page_idx, crops in by_page(paper.figures).items():
+        page = doc[page_idx]
+        union = fitz.Rect(crops[0][1])
+        for _, rect in crops[1:]:
+            union |= rect
+
+        prose = [wrect for wrect, _ in prose_words(page)]
+        for word in page.get_text("words"):
+            wrect = fitz.Rect(word[:4])
+            text = word[4]
+            if wrect.y1 < HEADER_Y or wrect.y0 > FOOTER_Y:
+                continue                  # running head or footer
+            if any(wrect.intersects(p) for p in prose):
+                continue                  # caption or body copy, not figure text
+            if not wrect.intersects(union):
+                continue                  # elsewhere on the page, not our business
+            hits = [(name, rect) for name, rect in crops if rect.intersects(wrect)]
+            if not hits:
+                problems.append(
+                    f"page {page_idx}: figure text {text!r} at "
+                    f"[{wrect.x0:.0f},{wrect.y0:.0f}] falls between crops")
+                continue
+            for name, rect in hits:
+                overhang = max(rect.x0 - wrect.x0, rect.y0 - wrect.y0,
+                               wrect.x1 - rect.x1, wrect.y1 - rect.y1)
+                if overhang > CLIP_TOLERANCE:
+                    problems.append(
+                        f"{name}: crop slices figure text {text!r} at "
+                        f"[{wrect.x0:.0f},{wrect.y0:.0f}] by {overhang:.1f}pt")
+    doc.close()
+    if problems:
+        print("FAILED: crop boxes slice or strand the figure's own text")
+        for p in problems:
+            print(f"  {p}")
+        return False
+    print("  no crop slices or strands the figure's own text")
+    return True
+
+
 def verify_panel_labels(paper):
     """Every panel label must land inside some crop for its page.
 
@@ -161,7 +217,8 @@ def verify_panel_labels(paper):
 
 # Both `--verify` and the write path gate on this one list, so they can never
 # disagree about what "verified" means. Add new checks here.
-CHECKS = (verify_crops, verify_coverage, verify_panel_labels)
+CHECKS = (verify_crops, verify_coverage, verify_figure_text,
+          verify_panel_labels)
 
 
 def verify_all(paper):
