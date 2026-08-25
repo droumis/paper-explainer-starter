@@ -1,12 +1,23 @@
 # Paper brief
 
-**Edit this file, then tell the agent to follow AGENTS.md.** Everything here
-steers what gets built. Leave a field blank to accept the default.
+Everything here steers what gets built. You can fill it in yourself, or leave it
+and let `/build-site` draft it from the PDF and ask you about the rest. Either
+way it ends up filled in, and editing it afterwards changes the next rebuild.
 
-The agent must read this before writing anything, and must ask rather than guess
-if a required field is empty.
+The agent must read this before writing anything. Where a required field is
+empty, it drafts from the paper and asks rather than guessing, then records the
+answers here.
 
 ---
+
+## Filling this in
+
+- **Decide for me**: `no`
+  `yes` lets the agent answer every blank field from the paper itself and build
+  straight through without asking. `/build-site auto` does the same for one run
+  without editing this file. Either way the agent writes its answers into the
+  fields below, marks each one `(agent's choice)`, and lists them when it
+  reports, so you can correct one and rebuild.
 
 ## The paper
 

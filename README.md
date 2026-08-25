@@ -4,24 +4,36 @@ Turn a research paper PDF into an interactive mkdocs site.
 
 ## Use it
 
-```bash
-# 1. new project from this starter
-git clone <this-repo> my-paper-site && cd my-paper-site
-rm -rf .git && git init
+1. **Get the starter.** Click "Use this template" on GitHub, or:
 
-# 2. drop the paper in
-cp ~/Downloads/some-paper.pdf .
+   ```bash
+   git clone git@github.com:droumis/paper-explainer-starter.git my-paper-site
+   cd my-paper-site && rm -rf .git && git init
+   ```
 
-# 3. say what you want
-$EDITOR PAPER.md
+2. **Put the PDF in that folder.** `cp ~/Downloads/some-paper.pdf .`
 
-# 4. open the folder in your editor and tell the agent:
-#      "Follow AGENTS.md"
-```
+3. **Open the folder in your coding agent and run `/build-site`.** If it does not
+   do slash commands, say "follow AGENTS.md" instead.
 
-The agent reads `PAPER.md`, copies `template/` into place, works out the figure
-geometry from the PDF, and builds the site. `PAPER.md` is the steering wheel:
-fill in what to emphasise and what to skip, and it will respect both.
+The command reads the PDF and drafts the brief from it, then asks you the few
+things the paper cannot settle: who is reading, the one sentence they should
+remember, what to skip. After that it derives the figure crops, writes the pages,
+builds the diagrams, and checks the result in a browser. `pixi run serve` shows
+the site at `http://localhost:8000`.
+
+### Steering it
+
+`PAPER.md` is where those answers get recorded, and the steering wheel
+afterwards. Edit it and run `/build-site` again to rebuild with a different
+audience, a different emphasis, or a different pipeline endpoint. Filling it in
+before you start also works, and then the command has nothing to ask.
+
+To skip the questions, run `/build-site auto`, or set **Decide for me** to `yes`
+in `PAPER.md`. The agent then picks the audience, the one sentence, the emphasis
+and the skip list from the paper, marks each choice in `PAPER.md`, and lists them
+when it finishes. That is the fastest path and the one most likely to aim at the
+wrong reader, so expect to correct a field and rebuild.
 
 ## What you get
 
@@ -37,11 +49,11 @@ fill in what to emphasise and what to skip, and it will respect both.
 
 | Path | Purpose |
 |---|---|
-| `PAPER.md` | The brief. **This is the file you edit.** |
+| `PAPER.md` | The brief. **The one file that steers the build.** Blank fields get drafted from the PDF and confirmed with you. |
 | `AGENTS.md` | Instructions the agent follows. |
 | `skills/paper-explainer/SKILL.md` | Accumulated lessons: figure geometry, diagram honesty, explaining a method, budgeting depth. |
 | `template/` | Working machinery, copied into the project root. Not reinvented per paper. |
-| `.kilo/command/` | Slash commands for the build and the accuracy audit. |
+| `.kilo/command/` | `/build-site` and `/audit-accuracy`. |
 
 ### The machinery
 

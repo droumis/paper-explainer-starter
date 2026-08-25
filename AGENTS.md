@@ -8,10 +8,19 @@ root.
 
 ## Before anything else
 
-1. **Read `PAPER.md` in full.** It is the brief. If a required field is empty
-   (audience, the one thing, emphasise, skip), ask rather than guess. Scope
-   creep is the main failure mode of this project type, and `PAPER.md` is the
-   only thing holding it back.
+1. **Read `PAPER.md` in full.** It is the brief. Scope creep is the main failure
+   mode of this project type, and `PAPER.md` is the only thing holding it back,
+   so it has to be filled in before any prose gets written. If a required field
+   is empty (audience, the one thing, emphasise, skip), do not guess and do not
+   hand the blank file back either: read the paper, draft what the paper can
+   settle, and ask the user about the rest as concrete options with a
+   recommendation. Write the answers into `PAPER.md` so the file records what the
+   site was built from. When **Decide for me** is `yes`, or the user asked for an
+   unattended run, answer the blank fields yourself instead of asking, mark each
+   one `(agent's choice)` in `PAPER.md`, and list those choices when you report.
+   Deciding is not the same as ignoring: an unattended run still commits to one
+   audience and one skip list before writing, because that is what keeps the site
+   from covering everything.
 2. **Load the `paper-explainer` skill** in `skills/paper-explainer/SKILL.md`. It
    carries the accumulated lessons: figure geometry, diagram honesty, how to
    explain a statistical method, how to budget depth. Follow it.
