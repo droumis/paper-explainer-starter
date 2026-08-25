@@ -195,7 +195,10 @@ proof that `cp -r template/* .` yields a project that builds with no warnings.
 It also fails if the template ever ships paper-specific state such as filled-in
 crop boxes or a committed PDF.
 
-`template/.github/workflows/ci.yml` is copied into each paper project. It checks
+`template/.github/workflows/site.yml` is installed by `init`, under that name so
+it never collides with this repo's own `ci.yml` and a pull stays clean. The
+starter's `ci.yml` comes along with the clone and keeps testing the machinery;
+delete it if you would rather not run that. `site.yml` checks
 syntax, the prose conventions (no em dashes, no "not just X but Y"), the figure
 crops and their references, a warning-free build, and then drives the built site
 in a real browser.

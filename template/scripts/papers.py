@@ -73,34 +73,43 @@ MONO_FILES = ("pixi.toml", "pixi.lock")
 # and mkdocs.yml, because in the starter those paths are generated. A clone keeps
 # that file, so init has to replace it, and this marker identifies it without
 # clobbering a .gitignore somebody wrote.
-STARTER_GITIGNORE_MARK = "instantiated project files"
-# The starter's own workflow tests the template and the machinery. A papers repo
-# wants the one that checks prose, crops, the build and the site per paper.
-STARTER_CI_MARK = "CI for the starter itself"
-CI_PATH = ".github/workflows/ci.yml"
+STARTER_GITIGNORE_MARK = "template/ is the source of truth"
+# The site workflow keeps its own filename rather than replacing this repo's
+# ci.yml, so a papers repo that pulls machinery updates never has to merge it.
+SITE_WORKFLOW = ".github/workflows/site.yml"
 
 
-def install_replacing_starter(rel: str, marker: str, label: str):
-    """Install a template file, replacing the starter's version of it.
+def install_gitignore():
+    """Give a single-paper project a .gitignore that does not hide it.
 
-    A clone arrives with the starter's `.gitignore` and workflow, both of which
-    are wrong for a project and neither of which announces that. Replace them
-    when the marker identifies them as the starter's, and never touch a file
-    somebody wrote.
+    A clone arrives with the starter's, which anchors docs/, scripts/, mkdocs.yml
+    and figures.toml at the root because there they are generated. In an
+    instantiated project those are the project, so nothing could be committed and
+    nothing said why. A multi-paper root keeps the starter's file, where those
+    anchors are correct and each paper's own docs/ is tracked.
     """
-    src, dest = TEMPLATE / rel, ROOT / rel
+    src, dest = TEMPLATE / ".gitignore", ROOT / ".gitignore"
     if not src.exists():
         return
     if dest.exists():
-        if marker in dest.read_text():
+        if STARTER_GITIGNORE_MARK in dest.read_text():
             dest.write_text(src.read_text())
-            print(f"  replaced {rel} ({label})")
+            print("  replaced .gitignore (the starter's hid this project's own files)")
         else:
-            print(f"  kept {rel} (not the starter's)")
+            print("  kept .gitignore (not the starter's)")
+        return
+    shutil.copy2(src, dest)
+    print("  wrote .gitignore")
+
+
+def install_site_workflow():
+    src = TEMPLATE / SITE_WORKFLOW
+    dest = ROOT / SITE_WORKFLOW
+    if not src.exists() or dest.exists():
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
-    print(f"  wrote {rel}")
+    print(f"  wrote {SITE_WORKFLOW}")
 
 
 def copy_into(src: Path, dest: Path) -> bool:
@@ -127,10 +136,11 @@ def cmd_init(args):
     mono = "--mono" in args
     print(f"initialising {ROOT} for "
           + ("several papers" if mono else "one paper"))
-    install_replacing_starter(".gitignore", STARTER_GITIGNORE_MARK,
-                              "the starter's hid this project's own files")
-    install_replacing_starter(CI_PATH, STARTER_CI_MARK,
-                              "the starter's tests the template, not a site")
+    install_site_workflow()
+    if not mono:
+        # A multi-paper root keeps the starter's .gitignore, where the root-level
+        # anchors are correct and each paper's own docs/ is still tracked.
+        install_gitignore()
     if mono:
         for name in MONO_FILES:
             src = TEMPLATE / name
@@ -176,10 +186,8 @@ def cmd_update(args):
         for f in sorted((TEMPLATE / "scripts").glob("*.py")):
             shutil.copy2(f, scripts / f.name)
             print(f"  scripts/{f.name}")
-    install_replacing_starter(".gitignore", STARTER_GITIGNORE_MARK,
-                              "the starter's hid this project's own files")
-    install_replacing_starter(CI_PATH, STARTER_CI_MARK,
-                              "the starter's tests the template, not a site")
+        install_gitignore()
+    install_site_workflow()
     cmd_sync_assets([])
 
 

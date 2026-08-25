@@ -117,7 +117,7 @@ sub-agents. Do this before declaring done, not after the user asks.
 
 ### 8. Keep CI green
 
-`template/.github/workflows/ci.yml` was copied in with the rest of the template.
+`init` installed `.github/workflows/site.yml` from the template.
 It checks the prose conventions, the figure crops and their references, a
 warning-free build, and the site in a browser. Run those checks locally before
 declaring done rather than discovering them in CI.

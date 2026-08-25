@@ -2,7 +2,7 @@
 # root, so a repo that clones this one and adds paper directories keeps tracking
 # each paper's own docs/, mkdocs.yml and figures.toml.
 /docs/
-/scripts/
+/scripts
 /mkdocs.yml
 /figures.toml
 /pixi.toml
