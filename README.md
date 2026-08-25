@@ -3,7 +3,7 @@
 Turn a research paper PDF into an interactive mkdocs site.
 
 ## Use it
-
+0. **Make a new directory and go into it**
 1. **Get the starter.** Click "Use this template" on GitHub, or:
 
    ```bash
