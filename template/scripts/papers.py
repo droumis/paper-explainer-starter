@@ -9,8 +9,9 @@
     pixi run sync-assets [name]        refresh the shared css/js from template/
     pixi run serve [name]              mkdocs serve for one project
     pixi run build [name]              mkdocs build for one project
-    pixi run index [--serve] [--port N] build every paper into dist/ behind one
-                                       landing page, and optionally serve it
+    pixi run index [--serve] [--port N] [--copy] [--no-build]
+                                       gather every paper's built site under one
+                                       landing page in dist/, and optionally serve
 
 `init` exists because copying the template by hand drops its dotfiles: a project
 that inherits the starter's own `.gitignore` has its `docs/`, `scripts/` and
@@ -32,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -428,22 +430,35 @@ def cmd_index(args):
     projects = [p for p in candidate_projects(Path.cwd()) if (p / "mkdocs.yml").exists()]
     if not projects:
         raise SystemExit("No paper projects here.")
+    copy = "--copy" in args
+    build = "--no-build" not in args
     dist = Path.cwd() / INDEX_DIR
     dist.mkdir(exist_ok=True)
 
     entries = []
     for project in projects:
-        print(f"building {project.name}")
-        if subprocess.run(["mkdocs", "build", "-q", "-f",
-                           str(project / "mkdocs.yml")]).returncode != 0:
-            raise SystemExit(f"{project.name} failed to build; index not written.")
+        if build:
+            print(f"building {project.name}")
+            if subprocess.run(["mkdocs", "build", "-q", "-f",
+                               str(project / "mkdocs.yml")]).returncode != 0:
+                raise SystemExit(f"{project.name} failed to build; index not written.")
         src = project / "site"
         if not src.is_dir():
-            raise SystemExit(f"{project.name} built no site/ directory.")
+            raise SystemExit(
+                f"{project.name} has no site/ directory. Drop --no-build, or run "
+                f"`pixi run build {project.name}` first.")
         dest = dist / project.name
-        if dest.exists():
+        if dest.is_symlink() or dest.is_file():
+            dest.unlink()
+        elif dest.is_dir():
             shutil.rmtree(dest)
-        shutil.copytree(src, dest)
+        if copy:
+            # A self-contained tree, for handing the whole thing to someone.
+            shutil.copytree(src, dest)
+        else:
+            # The default: link, so nothing is duplicated, a rebuilt paper is
+            # immediately live, and the 50-odd MB of built sites exists once.
+            dest.symlink_to(Path("..") / project.name / "site")
         try:
             crops = len(load_figures(project))
         except SystemExit:
@@ -455,15 +470,29 @@ def cmd_index(args):
             "crops": crops,
         })
 
-    (dist / "index.html").write_text(render_index(entries))
-    print(f"\nwrote {dist / 'index.html'} covering {len(entries)} papers")
+    (dist / "index.html").write_text(render_index(entries, copy))
+    how = "copied" if copy else "linked"
+    print(f"\nwrote {dist / 'index.html'} covering {len(entries)} papers ({how})")
 
     if "--serve" in args:
         port = args[args.index("--port") + 1] if "--port" in args else "8000"
+        # Refuse a port that already answers. A stale `mkdocs serve` binds
+        # 127.0.0.1 while http.server binds ::, so both can hold the same port and
+        # the browser silently reaches the older one. That looks like this command
+        # ignoring the landing page.
+        with socket.socket() as probe:
+            probe.settimeout(0.4)
+            if probe.connect_ex(("127.0.0.1", int(port))) == 0:
+                raise SystemExit(
+                    f"Something is already serving on 127.0.0.1:{port}, so the "
+                    "browser would reach that instead of this index.\n"
+                    f"Find it with `lsof -nP -iTCP:{port} -sTCP:LISTEN`, or pass "
+                    "--port N.")
         print(f"serving at http://127.0.0.1:{port}/")
         os.execvp(sys.executable,
-                  [sys.executable, "-m", "http.server", port, "-d", str(dist)])
-    print(f"serve it with:  pixi run index --serve")
+                  [sys.executable, "-m", "http.server", port,
+                   "-b", "127.0.0.1", "-d", str(dist)])
+    print("serve it with:  pixi run index --serve")
 
 
 INDEX_CSS = """
@@ -485,7 +514,7 @@ INDEX_CSS = """
 """
 
 
-def render_index(entries) -> str:
+def render_index(entries, copied=False) -> str:
     """A dependency-free landing page. Deliberately plain: it is a doorway."""
     rows = []
     for e in entries:
@@ -506,8 +535,11 @@ def render_index(entries) -> str:
         '  <p class="lede">One interactive site per paper. Each is built by its own\n'
         '  mkdocs configuration and copied here unchanged.</p>\n  <ul>\n'
         + "\n".join(rows) +
-        '\n  </ul>\n  <footer>Regenerate with <code>pixi run index</code>. To change a\n'
-        '  paper, edit its own directory and rebuild this index.</footer>\n'
+        '\n  </ul>\n  <footer>Regenerate with <code>pixi run index</code>. '
+        + ('Each site is copied in, so this tree is self-contained.'
+           if copied else
+           'Each site is linked, not copied, so rebuilding a paper updates it here.')
+        + ' To change a paper, edit its own directory.</footer>\n'
         '</body>\n</html>\n'
     )
 

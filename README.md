@@ -101,9 +101,13 @@ git push origin better-crop-check
 
 `pixi run index` builds every paper and gathers the results under one landing page
 in `dist/`, so you can serve one thing and click into each site:
-`pixi run index --serve`. Each paper is still built by its own `mkdocs.yml` and
-copied in unchanged, which works because `site_url` is empty and mkdocs then emits
-relative asset paths.
+`pixi run index --serve`. Each paper is still built by its own `mkdocs.yml`, and
+`dist/<paper>` is a symlink to it, so nothing is duplicated and a rebuilt paper is
+live immediately. Add `--copy` for a self-contained tree to hand to someone,
+`--no-build` to skip rebuilding, and `--port N` to move it. It refuses a port that
+already answers, because a stale `mkdocs serve` binds `127.0.0.1` while the index
+server binds `::`, so both can hold one port and the browser silently reaches the
+older one.
 
 Then drop that paper's PDF in `andermann-2011/`, and name the paper in any
 command: `pixi run probe andermann-2011 --suggest`, `pixi run serve
