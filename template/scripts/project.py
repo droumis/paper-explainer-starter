@@ -15,7 +15,7 @@ because in a multi-paper repo the extraction script is shared and per-paper
 state cannot live inside it.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import fitz
@@ -132,8 +132,13 @@ def split_project_arg(argv: list[str],
     return name, rest
 
 
-def load_figures(project: Path) -> dict[str, tuple[int, fitz.Rect]]:
+def load_figures(project: Path,
+                 qualities: dict[str, int] | None = None,
+                 ) -> dict[str, tuple[int, fitz.Rect]]:
     """Read `figures.toml` into {name: (page_index, Rect)}.
+
+    Pass `qualities` to also collect each crop's optional WebP quality, which is
+    absent for the lossless default.
 
     Every malformed entry is reported at once, with the file and key named, so
     filling this in is one edit-and-rerun cycle rather than several.
@@ -158,13 +163,14 @@ def load_figures(project: Path) -> dict[str, tuple[int, fitz.Rect]]:
         )
 
     figures: dict[str, tuple[int, fitz.Rect]] = {}
+    qualities = {} if qualities is None else qualities
     problems: list[str] = []
     for name, entry in (data.get("figures") or {}).items():
         if not isinstance(entry, dict):
             problems.append(f"{name}: expected a table, e.g. [figures.{name}]")
             continue
         bad = []
-        extra = sorted(set(entry) - {"page", "box"})
+        extra = sorted(set(entry) - {"page", "box", "quality"})
         if extra:
             bad.append(f"{name}: unexpected key(s) {', '.join(extra)}")
         # The markdown scanner in extract_figures matches figures/<name>.png on
@@ -183,9 +189,17 @@ def load_figures(project: Path) -> dict[str, tuple[int, fitz.Rect]]:
             bad.append(f"{name}: box must be [x0, y0, x1, y1] in points")
         elif box[2] <= box[0] or box[3] <= box[1]:
             bad.append(f"{name}: box is empty or inverted ({box})")
+        quality = entry.get("quality")
+        if quality is not None and (not isinstance(quality, int)
+                                    or isinstance(quality, bool)
+                                    or not 1 <= quality <= 100):
+            bad.append(f"{name}: quality must be an integer from 1 to 100, or "
+                       "absent for lossless")
         problems.extend(bad)
         if not bad:
             figures[name] = (page, fitz.Rect(*box))
+            if quality is not None:
+                qualities[name] = quality
 
     if problems:
         raise SystemExit(f"{path} is malformed:\n  " + "\n  ".join(problems))
@@ -199,6 +213,10 @@ class Paper:
     root: Path
     pdf: Path | None
     figures: dict[str, tuple[int, fitz.Rect]]
+    # Per-crop WebP quality. A crop absent from here is written lossless, which
+    # is the default because these are data figures: hairlines, small axis text
+    # and faint points are exactly what lossy compression damages.
+    qualities: dict[str, int] = field(default_factory=dict)
 
     @property
     def docs(self) -> Path:
@@ -223,8 +241,11 @@ class Paper:
         """
         from pdf_geometry import find_pdf
 
+        qualities: dict[str, int] = {}
+        figures = load_figures(project, qualities) if need_figures else {}
         return cls(
             root=project,
             pdf=find_pdf(project) if need_pdf else None,
-            figures=load_figures(project) if need_figures else {},
+            figures=figures,
+            qualities=qualities,
         )

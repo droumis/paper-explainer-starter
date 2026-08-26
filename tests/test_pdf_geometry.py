@@ -184,6 +184,18 @@ def check_project_module():
         passed.append(check("an unknown key is rejected rather than ignored",
                             ok, msg))
 
+        # Optional lossy quality for photographic panels.
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = 2\nbox = [56, 98, 297, 307]\nquality = 90\n")
+        q = {}
+        P.load_figures(proj, q)
+        passed.append(check("a quality is collected for the crop that sets it",
+                            q == {"fig1": 90}, f"got {q}"))
+        (proj / "figures.toml").write_text(
+            "[figures.fig1]\npage = 2\nbox = [56, 98, 297, 307]\nquality = 0\n")
+        ok, msg = expect_exit(lambda: P.load_figures(proj), "1 to 100")
+        passed.append(check("a quality outside 1 to 100 is rejected", ok, msg))
+
         # Every bad entry at once, so filling this in is one edit-and-rerun.
         (proj / "figures.toml").write_text(
             "[figures.a]\npage = 2\nbox = [1, 2]\n"
@@ -384,6 +396,42 @@ def main():
     passed.append(check("figure text stranded between two crops is rejected",
                         not ok and "falls between crops" in out,
                         out.strip().splitlines()[-1] if out else ""))
+
+    # ---- crops are written as WebP, lossless unless a quality says otherwise
+    print("\nwriting crops")
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory() as d:
+        proj = Path(d)
+        (proj / "docs").mkdir()
+        doc = fitz.open(str(tmp))
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=box)
+        lossless = proj / "a.webp"
+        lossy = proj / "b.webp"
+        ef.write_crop(pix, lossless)
+        ef.write_crop(pix, lossy, quality=80)
+        doc.close()
+        head = lossless.read_bytes()[:12]
+        passed.append(check("writes a real WebP file",
+                            head[:4] == b"RIFF" and head[8:12] == b"WEBP",
+                            f"header {head!r}"))
+        passed.append(check("a quality setting changes the encoding",
+                            lossless.read_bytes() != lossy.read_bytes()))
+        # On flat vector art lossy is often LARGER than lossless, which is why
+        # lossless is the default and quality is opt-in per figure. The saving
+        # appears on photographic content, so check it where it exists.
+        import random
+        from PIL import Image as _Image
+        rng = random.Random(0)
+        noise = _Image.new("RGB", (240, 240))
+        noise.putdata([(rng.randrange(256), rng.randrange(256), rng.randrange(256))
+                       for _ in range(240 * 240)])
+        a, b = proj / "n1.webp", proj / "n2.webp"
+        noise.save(a, format="WEBP", lossless=True, method=6)
+        noise.save(b, format="WEBP", quality=80, method=6)
+        passed.append(check("on photographic content, quality 80 beats lossless",
+                            b.stat().st_size < a.stat().st_size,
+                            f"lossless {a.stat().st_size}, q80 {b.stat().st_size}"))
 
     passed.extend(check_project_module())
 

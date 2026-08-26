@@ -117,8 +117,8 @@ managing its own machinery.
 ## What you get
 
 - an mkdocs-material site with interactive D3 diagrams
-- figure crops taken from the PDF, checked so they cannot include caption text
-  or cut off panels the captions describe
+- figure crops taken from the PDF as lossless WebP, checked so they cannot
+  include caption text or cut off panels the captions describe
 - real in-browser model fitting where the paper fits a model, rather than
   animations that display a stored answer
 - optionally, a page carrying one simulated dataset from raw data through to
@@ -172,7 +172,7 @@ the parameters it generated its own data from.
 ```bash
 node tests/test_stats.cjs                                       # 54 checks
 pixi run --manifest-path template/pixi.toml \
-  python tests/test_pdf_geometry.py                             # 48 checks
+  python tests/test_pdf_geometry.py                             # 53 checks
 pixi run --manifest-path template/pixi.toml \
   python tests/test_papers.py                                   # 11 checks
 ```

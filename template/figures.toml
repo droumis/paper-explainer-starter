@@ -14,6 +14,14 @@
 # crops that swallow prose, clip a panel, strand content between two crops, or
 # leave a panel label outside every box.
 
+# Crops are written as WebP, lossless by default, which is about 60% of the
+# equivalent PNG at identical pixels. For a photographic panel (histology, a
+# wide-field image, a movie frame) add `quality = 90`, which is roughly a sixth of
+# the PNG with no visible difference at display size. Leave it off for anything
+# with hairlines, small axis text or faint points, where lossy compression
+# damages exactly the thing the reader is being asked to look at.
+
 # [figures.fig1_task]
 # page = 2
 # box = [56, 98, 297, 307]
+# quality = 90

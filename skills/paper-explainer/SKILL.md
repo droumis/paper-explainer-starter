@@ -230,6 +230,16 @@ After extraction, cross-check that every image referenced in `docs/*.md` exists 
 
 Then verify with Playwright that all `<img>` tags load across all pages. Image paths in markdown pages served as `/pagename/index.html` resolve relative to that subdirectory — use `../assets/img/...` not `assets/img/...`.
 
+### Crops are WebP, and lossy is a per-figure decision
+
+Extraction writes WebP. Lossless is the default and lands near 60% of the
+equivalent PNG at identical pixels. Add `quality = 90` in `figures.toml` only for
+a photographic panel, where it saves five or six times the bytes with no visible
+difference at display size. Do not set it on a panel carrying hairlines, small
+axis text or faint scatter points: those are the first things lossy compression
+destroys, and a reader cannot tell an artefact from a measurement. On flat vector
+art lossy is often larger than lossless anyway.
+
 ### Keep the delivered image size near the displayed size
 
 A 250-DPI crop of a full-width journal figure is several thousand pixels wide against a content column of roughly 720 px, so pages can ship megabytes they cannot display. Cap the render zoom per crop rather than resampling afterward, which keeps text in the figure sharp:

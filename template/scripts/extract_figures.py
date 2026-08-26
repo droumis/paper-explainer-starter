@@ -27,11 +27,13 @@ Confirm the checks actually bite before trusting them: temporarily set a box to
 something obviously wrong (a whole page, say) and watch them complain.
 """
 
+import io
 import re
 import sys
 from pathlib import Path
 
 import fitz
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_geometry import (  # noqa: E402
@@ -49,6 +51,11 @@ from project import (  # noqa: E402
 
 DPI = 250
 ZOOM = DPI / 72
+
+# Crops are written as WebP. Lossless WebP is about 60% of the equivalent PNG at
+# identical pixels, and a per-figure `quality` in figures.toml turns on lossy
+# compression for photographic panels, where it saves far more.
+FIGURE_EXT = "webp"
 
 # Cap the delivered width of a cropped figure. The site renders these in a
 # container roughly 720 px wide, so a 250-DPI crop of a full-width journal
@@ -235,6 +242,25 @@ def verify_all(paper):
     return all([check(paper) for check in CHECKS])
 
 
+def write_crop(pix, out_path, quality=None):
+    """Write one crop as WebP, lossless unless a quality is given.
+
+    Lossless is the default because a figure crop is data: hairlines, small axis
+    text and faint scatter points are what lossy compression damages first, and a
+    reader cannot tell an artefact from a measurement. It still lands around 60%
+    of the equivalent PNG.
+
+    Set `quality` per figure in figures.toml for a photographic panel, where the
+    saving is far larger: a histology or wide-field image at quality 90 is
+    roughly a sixth of the PNG with no visible difference at display size.
+    """
+    img = Image.open(io.BytesIO(pix.tobytes("png")))
+    if quality is None:
+        img.save(out_path, format="WEBP", lossless=True, method=6)
+    else:
+        img.save(out_path, format="WEBP", quality=quality, method=6)
+
+
 def crop_figures(paper):
     if not verify_all(paper):
         raise SystemExit("Refusing to write figures with bad crop boxes.")
@@ -245,10 +271,12 @@ def crop_figures(paper):
         page = doc[page_idx]
         zoom = min(ZOOM, MAX_FIGURE_WIDTH / rect.width)
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect)
-        out_path = paper.figure_dir / f"{name}.png"
-        pix.save(str(out_path))
+        quality = paper.qualities.get(name)
+        out_path = paper.figure_dir / f"{name}.{FIGURE_EXT}"
+        write_crop(pix, out_path, quality)
         kb = out_path.stat().st_size / 1024
-        print(f"  {name}.png ({pix.width}x{pix.height}, {kb:.0f} KB)")
+        how = "lossless" if quality is None else f"quality {quality}"
+        print(f"  {out_path.name} ({pix.width}x{pix.height}, {kb:.0f} KB, {how})")
     doc.close()
 
 
@@ -273,13 +301,15 @@ def check_references(paper):
     """
     md = "\n".join(p.read_text() for p in paper.docs.glob("*.md"))
     ok = True
+    # Both extensions are accepted, so a site written before crops became WebP
+    # keeps verifying until it is converted.
     for name in paper.figures:
-        if f"{name}.png" not in md:
-            print(f"  generated but unreferenced: {name}.png")
+        if not any(f"{name}.{ext}" in md for ext in ("webp", "png")):
+            print(f"  generated but unreferenced: {name}.{FIGURE_EXT}")
             ok = False
-    for ref in sorted(set(re.findall(r"figures/([a-z0-9_]+)\.png", md))):
-        if not (paper.figure_dir / f"{ref}.png").exists():
-            print(f"  referenced but missing: {ref}.png")
+    for ref, ext in sorted(set(re.findall(r"figures/([a-z0-9_]+)\.(webp|png)", md))):
+        if not (paper.figure_dir / f"{ref}.{ext}").exists():
+            print(f"  referenced but missing: {ref}.{ext}")
             ok = False
     if ok:
         print("  figure references resolve in both directions")

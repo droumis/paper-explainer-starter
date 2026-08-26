@@ -140,7 +140,8 @@ jobs:
             echo "::error::template/figures.toml has crop boxes filled in"
             exit 1
           fi
-          if ls template/docs/assets/img/figures/*.png >/dev/null 2>&1; then
+          if ls template/docs/assets/img/figures/*.webp \
+                template/docs/assets/img/figures/*.png >/dev/null 2>&1; then
             echo "::error::extracted figures committed to the template"
             exit 1
           fi
