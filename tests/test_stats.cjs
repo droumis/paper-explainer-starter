@@ -17,7 +17,7 @@ const code = fs.readFileSync(LIB, "utf8");
 const M = new Function(
   code + "\n return {makeRNG, poissonSample, solveLinear, fitPoissonGLM," +
          " crossValidatedImprovement, pickSubset, logFactorial," +
-         " fitLeastSquares, fitLDA," +
+         " fitLeastSquares, fitLDA, eigenSymmetric," +
          " BETA_POS, BETA_NEG, BETA_ZERO};"
 )();
 
@@ -285,6 +285,72 @@ console.log("\nfitLDA");
     M.fitLDA([[0, 0]], B) === null);
   check("returns null when the points are collinear",
     M.fitLDA([[0, 0], [1, 1], [2, 2]], [[3, 3], [4, 4], [5, 5]]) === null);
+}
+
+// ------------------------------------------------------------------ eigenvectors
+console.log("\neigenSymmetric");
+{
+  // Known answer: a diagonal matrix's eigenvalues are its diagonal, sorted.
+  const d = M.eigenSymmetric([[3, 0, 0], [0, 7, 0], [0, 0, 5]]);
+  check("recovers a diagonal matrix's eigenvalues, largest first",
+    d.converged && d.values.map(v => Math.round(v)).join() === "7,5,3",
+    d.values.join());
+  check("its eigenvectors are the axes",
+    Math.abs(Math.abs(d.vectors[0][1]) - 1) < 1e-9);
+
+  // Known answer: [[2,1],[1,2]] has eigenvalues 3 and 1, eigenvectors (1,1) and (1,-1).
+  const t = M.eigenSymmetric([[2, 1], [1, 2]]);
+  check("recovers a 2x2 with a known closed form",
+    Math.abs(t.values[0] - 3) < 1e-9 && Math.abs(t.values[1] - 1) < 1e-9,
+    t.values.join());
+  check("its leading eigenvector is (1,1) normalised",
+    Math.abs(Math.abs(t.vectors[0][0]) - Math.SQRT1_2) < 1e-9);
+
+  // The defining property, on a random symmetric matrix: A v = lambda v.
+  const rng = M.makeRNG(3);
+  const n = 6;
+  const A = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = i; j < n; j++) { A[i][j] = A[j][i] = rng() * 2 - 1; }
+  }
+  const e = M.eigenSymmetric(A);
+  let worst = 0;
+  e.vectors.forEach((v, k) => {
+    for (let i = 0; i < n; i++) {
+      let av = 0;
+      for (let j = 0; j < n; j++) av += A[i][j] * v[j];
+      worst = Math.max(worst, Math.abs(av - e.values[k] * v[i]));
+    }
+  });
+  check("satisfies A v = lambda v on a random symmetric matrix", worst < 1e-8,
+    `worst residual ${worst.toExponential(1)}`);
+  check("eigenvectors are unit length",
+    e.vectors.every(v => Math.abs(Math.sqrt(v.reduce((s, x) => s + x * x, 0)) - 1) < 1e-9));
+  check("eigenvectors are mutually orthogonal",
+    Math.abs(e.vectors[0].reduce((s, x, i) => s + x * e.vectors[1][i], 0)) < 1e-8);
+  check("eigenvalues sum to the trace",
+    Math.abs(e.values.reduce((s, v) => s + v, 0) -
+             A.reduce((s, row, i) => s + row[i], 0)) < 1e-9);
+
+  // A correlation matrix of two blocks: the leading component should separate
+  // them, which is the property a reactivation weight vector relies on.
+  const C = [[1, .9, .1, .1], [.9, 1, .1, .1], [.1, .1, 1, .85], [.1, .1, .85, 1]];
+  const c = M.eigenSymmetric(C);
+  const w = c.vectors[0];
+  check("leading component of a two-block correlation matrix groups the blocks",
+    Math.sign(w[0]) === Math.sign(w[1]) && Math.sign(w[2]) === Math.sign(w[3]),
+    w.map(v => v.toFixed(2)).join());
+
+  // A redrawn diagram must not flip the sign of its weights between frames.
+  const again = M.eigenSymmetric(C);
+  check("sign is deterministic across calls",
+    again.vectors[0].every((v, i) => Math.abs(v - w[i]) < 1e-12));
+
+  check("rejects a non-square matrix", M.eigenSymmetric([[1, 2]]) === null);
+  check("rejects a non-finite entry",
+    M.eigenSymmetric([[1, NaN], [NaN, 1]]) === null);
+  check("handles a 1x1 matrix",
+    M.eigenSymmetric([[4]]).values[0] === 4);
 }
 
 console.log(`\n${passed}/${passed + failed} checks passed`);

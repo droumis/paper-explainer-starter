@@ -164,13 +164,14 @@ managing its own machinery.
 Poisson sampling, a linear solver, a Poisson GLM fitted by IRLS with an optional
 per-iteration trace, repeated-split cross-validation against a shuffled
 baseline, nonlinear least squares by Levenberg-Marquardt with a numeric Jacobian
-for models that are not GLMs, and two-class linear discriminant analysis. It exists so a diagram can do real estimation rather than revealing
+for models that are not GLMs, two-class linear discriminant analysis, and a Jacobi
+eigensolver for diagonalising a correlation matrix. It exists so a diagram can do real estimation rather than revealing
 the parameters it generated its own data from.
 
 ## Tests and CI
 
 ```bash
-node tests/test_stats.cjs                                       # 54 checks
+node tests/test_stats.cjs                                       # 67 checks
 pixi run --manifest-path template/pixi.toml \
   python tests/test_pdf_geometry.py                             # 53 checks
 pixi run --manifest-path template/pixi.toml \

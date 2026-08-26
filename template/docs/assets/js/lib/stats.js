@@ -422,6 +422,98 @@ function fitLDA(pointsA, pointsB) {
 
 
 /**
+ * Eigenvectors and eigenvalues of a real symmetric matrix, by the cyclic Jacobi
+ * method, sorted by descending eigenvalue.
+ *
+ * For any analysis that diagonalises a correlation or covariance matrix:
+ * principal components of population activity, a leading co-activity pattern, a
+ * reactivation weight vector. A correlation matrix is symmetric, so this is the
+ * right tool and it needs no library.
+ *
+ * Jacobi is chosen over a power iteration because it returns the whole
+ * decomposition, which is what a diagram needs when it shows the second and
+ * subsequent components, and because it is unconditionally stable on symmetric
+ * input at the sizes a browser diagram uses.
+ *
+ * Returns { values, vectors, sweeps, converged } where `vectors[k]` is the
+ * eigenvector for `values[k]`, each normalised to unit length with its
+ * largest-magnitude entry made positive so a redrawn diagram does not flip sign
+ * between frames. Returns null for non-square, empty or non-finite input.
+ * Callers MUST check `converged` before displaying anything derived from it.
+ */
+function eigenSymmetric(matrix, opts = {}) {
+  const maxSweeps = opts.maxSweeps === undefined ? 60 : opts.maxSweeps;
+  const tol = opts.tol === undefined ? 1e-12 : opts.tol;
+  const n = matrix.length;
+  if (!n || matrix.some(row => !row || row.length !== n)) return null;
+  if (matrix.some(row => row.some(v => !isFinite(v)))) return null;
+
+  // Work on a copy, symmetrised, so a caller's matrix is never mutated and tiny
+  // asymmetries from floating point accumulation cannot derail the rotations.
+  const A = matrix.map((row, i) => row.map((v, j) => (v + matrix[j][i]) / 2));
+  let V = [];
+  for (let i = 0; i < n; i++) {
+    V.push(new Array(n).fill(0));
+    V[i][i] = 1;
+  }
+
+  const offDiagonal = () => {
+    let s = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) s += A[i][j] * A[i][j];
+    return s;
+  };
+
+  let sweeps = 0;
+  let converged = n === 1;
+  const scale = Math.max(1, offDiagonal());
+  for (let sweep = 0; sweep < maxSweeps && !converged; sweep++) {
+    sweeps = sweep + 1;
+    for (let p = 0; p < n - 1; p++) {
+      for (let q = p + 1; q < n; q++) {
+        if (Math.abs(A[p][q]) < 1e-300) continue;
+        // Rotation angle that zeroes A[p][q], in the numerically stable form
+        // that avoids catastrophic cancellation when A[p][p] is close to A[q][q].
+        const theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+        const c = 1 / Math.sqrt(t * t + 1);
+        const s = t * c;
+        for (let k = 0; k < n; k++) {
+          const akp = A[k][p], akq = A[k][q];
+          A[k][p] = c * akp - s * akq;
+          A[k][q] = s * akp + c * akq;
+        }
+        for (let k = 0; k < n; k++) {
+          const apk = A[p][k], aqk = A[q][k];
+          A[p][k] = c * apk - s * aqk;
+          A[q][k] = s * apk + c * aqk;
+        }
+        for (let k = 0; k < n; k++) {
+          const vkp = V[k][p], vkq = V[k][q];
+          V[k][p] = c * vkp - s * vkq;
+          V[k][q] = s * vkp + c * vkq;
+        }
+      }
+    }
+    if (offDiagonal() <= tol * scale) converged = true;
+  }
+
+  const order = A.map((row, i) => i).sort((a, b) => A[b][b] - A[a][a]);
+  const values = order.map(i => A[i][i]);
+  const vectors = order.map(i => {
+    const v = V.map(row => row[i]);
+    const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+    if (!(norm > 0)) return v;
+    let lead = 0;
+    v.forEach((x, k) => { if (Math.abs(x) > Math.abs(v[lead])) lead = k; });
+    const sign = v[lead] < 0 ? -1 : 1;
+    return v.map(x => (sign * x) / norm);
+  });
+  if (!values.every(isFinite) || vectors.some(v => v.some(x => !isFinite(x)))) return null;
+  return { values, vectors, sweeps, converged };
+}
+
+
+/**
  * Pick `k` distinct indices out of `n`, unbiased (Fisher-Yates prefix).
  * Used for subsampling predictors when sweeping ensemble size.
  */
