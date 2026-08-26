@@ -9,7 +9,7 @@ __pycache__/
 .env
 
 # Full-page probe renders are scratch output, regenerated on demand.
-docs/assets/img/figures/pages/
+**/docs/assets/img/figures/pages/
 
 # Papers are usually not redistributable. Cropped figures are committed, so the
 # site still builds where the PDF is absent.
