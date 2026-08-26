@@ -21,7 +21,7 @@ that took a long time to find.
 | `scripts/extract_figures.py` | Crops figures, refusing to write bad ones. Three checks. |
 | `scripts/check_site.py` | Drives the built site in a browser and fails on rendering problems |
 | `scripts/project.py` | Finds which paper project to act on, and loads its `figures.toml` |
-| `scripts/papers.py` | `new-paper`, `sync-assets`, and the `serve`/`build` wrappers |
+| `scripts/papers.py` | `new-paper`, `sync-assets`, `index`, and the `serve`/`build` wrappers |
 | `docs/assets/js/lib/stats.js` | Seeded RNG, Poisson sampling, linear solver, Poisson GLM by IRLS with trace, cross-validation, nonlinear least squares (Levenberg-Marquardt), two-class LDA, symmetric eigendecomposition by Jacobi |
 | `docs/assets/css/{distill,custom}.css` | Diagram, figure, caption and control styling |
 

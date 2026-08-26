@@ -99,6 +99,12 @@ git cherry-pick <the commit touching template/, skills/ or tests/>
 git push origin better-crop-check
 ```
 
+`pixi run index` builds every paper and gathers the results under one landing page
+in `dist/`, so you can serve one thing and click into each site:
+`pixi run index --serve`. Each paper is still built by its own `mkdocs.yml` and
+copied in unchanged, which works because `site_url` is empty and mkdocs then emits
+relative asset paths.
+
 Then drop that paper's PDF in `andermann-2011/`, and name the paper in any
 command: `pixi run probe andermann-2011 --suggest`, `pixi run serve
 andermann-2011`. The argument is optional while only one paper exists, and

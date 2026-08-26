@@ -9,6 +9,8 @@
     pixi run sync-assets [name]        refresh the shared css/js from template/
     pixi run serve [name]              mkdocs serve for one project
     pixi run build [name]              mkdocs build for one project
+    pixi run index [--serve] [--port N] build every paper into dist/ behind one
+                                       landing page, and optionally serve it
 
 `init` exists because copying the template by hand drops its dotfiles: a project
 that inherits the starter's own `.gitignore` has its `docs/`, `scripts/` and
@@ -28,7 +30,9 @@ exist. It never touches `diagrams.js`, which is per paper.
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -384,10 +388,128 @@ def main():
         cmd_new(args)
     elif cmd == "sync-assets":
         cmd_sync_assets(args)
+    elif cmd == "index":
+        cmd_index(args)
     elif cmd in ("serve", "build"):
         cmd_mkdocs(cmd, args)
     else:
         raise SystemExit(f"Unknown command {cmd!r}.\n{__doc__}")
+
+
+# ------------------------------------------------------------
+# One landing page over every paper's built site
+# ------------------------------------------------------------
+
+INDEX_DIR = "dist"
+
+
+def site_title(project: Path) -> str:
+    """The site_name from a project's mkdocs.yml, for the landing page."""
+    cfg = project / "mkdocs.yml"
+    if cfg.exists():
+        m = re.search(r'^site_name:\s*["\']?(.+?)["\']?\s*$', cfg.read_text(), re.M)
+        if m:
+            return m.group(1).strip()
+    return project.name
+
+
+def cmd_index(args):
+    """Build every paper and gather the results under one landing page.
+
+    Each paper is built by its own mkdocs.yml and copied whole into dist/<name>/,
+    so nothing about a paper's site or content changes: this only collects output.
+    It works because the template sets `site_url: ""`, which makes mkdocs emit
+    relative asset paths, so a built site runs from any subdirectory.
+
+    A nav-merging plugin was the alternative and was rejected: every paper has its
+    own diagrams.js and its own nav, and merging would mean editing each paper to
+    suit the index.
+    """
+    projects = [p for p in candidate_projects(Path.cwd()) if (p / "mkdocs.yml").exists()]
+    if not projects:
+        raise SystemExit("No paper projects here.")
+    dist = Path.cwd() / INDEX_DIR
+    dist.mkdir(exist_ok=True)
+
+    entries = []
+    for project in projects:
+        print(f"building {project.name}")
+        if subprocess.run(["mkdocs", "build", "-q", "-f",
+                           str(project / "mkdocs.yml")]).returncode != 0:
+            raise SystemExit(f"{project.name} failed to build; index not written.")
+        src = project / "site"
+        if not src.is_dir():
+            raise SystemExit(f"{project.name} built no site/ directory.")
+        dest = dist / project.name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+        try:
+            crops = len(load_figures(project))
+        except SystemExit:
+            crops = 0
+        entries.append({
+            "name": project.name,
+            "title": site_title(project),
+            "pages": len(list((project / "docs").glob("*.md"))),
+            "crops": crops,
+        })
+
+    (dist / "index.html").write_text(render_index(entries))
+    print(f"\nwrote {dist / 'index.html'} covering {len(entries)} papers")
+
+    if "--serve" in args:
+        port = args[args.index("--port") + 1] if "--port" in args else "8000"
+        print(f"serving at http://127.0.0.1:{port}/")
+        os.execvp(sys.executable,
+                  [sys.executable, "-m", "http.server", port, "-d", str(dist)])
+    print(f"serve it with:  pixi run index --serve")
+
+
+INDEX_CSS = """
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         max-width: 46rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.6;
+         color: #23272b; background: #fff; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
+  p.lede { color: #666; margin-top: 0; }
+  ul { list-style: none; padding: 0; margin-top: 2rem; }
+  li { padding: 0.9rem 0; border-top: 1px solid #e7e7e7; }
+  li:last-child { border-bottom: 1px solid #e7e7e7; }
+  a { text-decoration: none; color: inherit; }
+  a:hover .title { text-decoration: underline; }
+  .title { font-size: 1.1rem; font-weight: 600; }
+  .dir { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #999;
+         margin-left: 0.6rem; }
+  .meta { font-size: 0.85rem; color: #888; }
+  footer { margin-top: 3rem; font-size: 0.85rem; color: #999; }
+"""
+
+
+def render_index(entries) -> str:
+    """A dependency-free landing page. Deliberately plain: it is a doorway."""
+    rows = []
+    for e in entries:
+        rows.append(
+            '      <li>\n'
+            f'        <a href="{e["name"]}/index.html">'
+            f'<span class="title">{e["title"]}</span>'
+            f'<span class="dir">{e["name"]}</span></a><br>\n'
+            f'        <span class="meta">{e["pages"]} pages &middot; '
+            f'{e["crops"]} figure crops</span>\n'
+            '      </li>'
+        )
+    return (
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<title>Paper explainers</title>\n<style>' + INDEX_CSS + '</style>\n'
+        '</head>\n<body>\n  <h1>Paper explainers</h1>\n'
+        '  <p class="lede">One interactive site per paper. Each is built by its own\n'
+        '  mkdocs configuration and copied here unchanged.</p>\n  <ul>\n'
+        + "\n".join(rows) +
+        '\n  </ul>\n  <footer>Regenerate with <code>pixi run index</code>. To change a\n'
+        '  paper, edit its own directory and rebuild this index.</footer>\n'
+        '</body>\n</html>\n'
+    )
 
 
 if __name__ == "__main__":
