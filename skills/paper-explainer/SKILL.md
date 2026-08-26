@@ -253,6 +253,71 @@ Add `loading="lazy"` to every figure below the first on a page. If you do, fix a
 
 **Inspecting figures without blowing up context:** high-DPI crops are multi-megabyte PNGs, and reading several at once can exceed the provider's attachment limit and force a context compaction. Downscale to roughly 500 px and save as JPEG before reading, and crop to the region in question rather than loading whole pages. Note that element screenshots of a live page can capture the theme's sticky header over the image — inspect the PNG on disk when checking a crop.
 
+
+### Path groups overclaim the same way blocks do
+
+One entry from `get_drawings()` can hold many unconnected segments: journals
+routinely emit every axis line of every panel as a single path. Its reported
+`rect` is the union of them, a box spanning the whole figure that is mostly empty.
+Used as figure content, that phantom rect straddles every panel boundary at once
+and makes a multi-panel figure impossible to split, because any boundary you pick
+"clips" it. `figure_graphics` therefore walks `item["items"]` and yields a rect per
+drawn segment. If a figure page reports no gap anywhere in x or y, suspect this
+before concluding the panels genuinely touch.
+
+### PyMuPDF rect operations are silently no-ops on empty rects
+
+This cost two separate bugs in one session and both made the checks weaker rather
+than louder, which is the dangerous direction:
+
+- **`Rect.intersect()` does nothing to an empty rect.** A horizontal or vertical
+  segment is empty in one dimension, so clipping it silently succeeds while
+  changing nothing, and the segment escapes its scissor. **Pad degenerate
+  dimensions before intersecting, not after.**
+- **`Rect.__or__` / `include_rect()` ignores an empty operand.** Building a
+  bounding box by unioning per-point rects therefore returns a point, dropping
+  every straight segment on the page. Build from `min`/`max` of coordinates.
+
+A rect that lies wholly outside its clip comes back **inverted** (`x1 < x0`) rather
+than empty, and `Rect.width` reports the absolute difference, so an inverted rect
+looks like real content of plausible size. Drop anything inverted or empty after
+clipping, or it surfaces as content stranded outside every crop at coordinates that
+appear nowhere on the page.
+
+### Full-height page rules, and the header band
+
+`MAX_CONTENT_WIDTH_FRAC` screens the full-width rules and page backgrounds. The
+rotated case needs its own guard: journals draw a hairline down the page edge that
+runs the full text height, on every page including text-only ones. A quick way to
+spot it is a page inventory reporting one to three "graphics" on pages that hold no
+figure at all.
+
+`HEADER_Y` and `FOOTER_Y` are defaults, not facts about layout. A journal that
+starts figures above `HEADER_Y` makes the top of every figure invisible to the
+geometry, panel letters included, so no check can see a crop that cuts them off.
+Nature runs figures from about y=48 against a 95 pt default. Set the band per paper
+in `figures.toml` rather than editing the constant, which would silently move every
+other paper's crops:
+
+```toml
+[page]
+header_y = 45
+```
+
+Symptom to watch for: `--suggest` and your own tight boxes agree with each other
+but both start below the panel letters.
+
+### Sibling crops should share their boundary
+
+When splitting one figure into several crops, give adjacent crops the *same*
+boundary coordinate rather than leaving a gap. Any gap is where content goes to
+die: it intersects neither crop and gets reported as stranded. Place the shared
+edge inside a measured empty corridor and nothing is clipped either way. Find the
+corridors by computing coverage of graphics **and** figure text along each axis and
+looking for runs of at least 2 pt with nothing in them.
+
+Also exclude the page-background rect, the running header/footer, and full-width rules before unioning extents, and skip narrow word-rich blocks — those are rotated axis labels, which are figure content, not prose.
+
 ## Explaining a statistical method
 
 Naming a method is not explaining it. A page that presents an equation, defines its symbols, and reports the results can still leave a reader unable to say what the method *is*. Audit any method page against this list:
@@ -409,3 +474,62 @@ of the kind. Use `--port N` when running more than one project at once.
 - [ ] Every equation has an interactive breakdown connecting symbols to visuals
 - [ ] Maze/track diagrams match the actual paper figures
 - [ ] A general undergrad can follow page 1 through the final page without external references
+
+### A panel must fill its viewBox in its initial state
+
+`check_site.py` compares drawn extent against the declared `viewBox`, and a
+diagram that draws only a "press the button" message before its first run will fail
+that comparison even though it works. Draw the frame, the axes and whatever value
+is already known on first render, and add the computed data on top afterwards. That
+is better for the reader too, since the axis ranges are visible before anything is
+computed.
+
+Decide what belongs on the main line by asking what the reader needs in order to understand *the paper*. For an optimization routine that is usually three sentences: what it optimizes, that it is iterative, and that it can fail if the paper excluded non-converging cases. Derivations, per-iteration anatomy, and convergence rates are genuine depth but they are optional depth.
+
+### A significance test must be shown to fail before it can be trusted
+
+Reconstructing a shuffle or permutation test is worse than reconstructing a fit,
+because a broken test still produces a plausible histogram with the observed value
+sitting somewhere in it. Nothing looks wrong. Sweep the effect strength you control
+from zero to maximum across several seeds and tabulate the detection rate. A test
+that fires at zero effect, or fails at maximum effect, is broken however good the
+picture looks. Do this before writing the prose, and keep the harness in the repo.
+
+Two structural mistakes to check for specifically, both of which produce a null
+distribution centred on the observed value at *every* effect strength:
+
+- **Simulating one trial where the analysis pools over many.** If both signals are
+  near-periodic, a single pass sits at some fixed relative phase whether or not
+  they are coupled, and shifting all its events rigidly slides the event-triggered
+  average without changing its shape. Coupling between two rhythms is only visible
+  as consistency of phase *across* passes, which is usually exactly how the paper
+  words its null hypothesis. Read that wording and reproduce its unit.
+- **Randomising per-experiment where the paper randomises per-trial.** One shared
+  offset across all trials preserves the very structure the shuffle exists to
+  destroy. Where the Methods are ambiguous ("offset 5,000 times, keeping
+  inter-event times intact") the main text usually disambiguates ("on each trial").
+  Quote both into your notes.
+
+Also give the simulated rhythms realistic frequency jitter. Two exact metronomes
+never change their relative phase within a trial, so an uncoupled condition is as
+rigidly structured as a coupled one and a bounded shuffle can only spread phase
+wider than the observed data, which biases the test towards significance whatever
+the truth. The jitter is what makes "uncoupled" a real condition rather than a
+relabelling.
+
+## The companion notebook
+
+When `PAPER.md` asks for one, it reproduces **the site's** simulation, not the
+paper's analysis, and it has to say so in its first cell.
+
+Generate it from a script rather than hand-writing cells, and keep the generator in
+the repo. Two reasons. Editing a live notebook through an editor integration can
+leave the document dirty and unsaved, so the file on disk stays empty while every
+edit reports success. And generated cells cannot drift from code that has been run.
+
+Then actually run it. A notebook nobody has executed is a notebook that does not
+work, and the environment often has no Jupyter kernel. Extracting every code cell,
+concatenating them in order, and running them as one script under a headless
+matplotlib backend catches everything that matters and needs no kernel. Ship no
+stored outputs: a notebook carrying outputs it did not just produce is claiming
+results it cannot back up. Put assertions in the cells so running it is a test.
