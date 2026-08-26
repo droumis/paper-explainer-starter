@@ -53,19 +53,42 @@ LABEL_OVERLAP_FRAC = 0.22
 # to their low, middle and high value; a select takes its first, middle and last
 # option, so a diagram with a three-way mode select is checked in all three.
 LAYOUT_MODES = ("mid", "min", "max")
+# How long to wait for an image that has not settled. Past this it is reported as
+# pending rather than awaited, because awaiting it never returns.
+IMAGE_SETTLE_MS = 3000
 
 # A lazy image that has not loaded is not broken. Only zero intrinsic width
 # after loading settles counts as a real failure.
+#
+# Two traps here, both of which cost a long debugging session. A single jump to
+# the bottom of the page can skip an image entirely, leaving it lazy and pending;
+# and a pending image fires neither `load` nor `error`, so awaiting it never
+# returns. `page.evaluate` takes no timeout, so that hangs the whole run with no
+# output and looks like a browser problem. Scroll in steps to trigger loading,
+# then race every straggler against a timer.
 COUNT_BROKEN_IMAGES = """
-    async () => {
-      window.scrollTo(0, document.body.scrollHeight);
-      await new Promise(r => setTimeout(r, 400));
+    async (waitMs) => {
+      const step = Math.max(200, Math.floor(window.innerHeight * 0.8));
+      for (let y = 0; y < document.body.scrollHeight; y += step) {
+        window.scrollTo(0, y);
+        await new Promise(r => setTimeout(r, 60));
+      }
       window.scrollTo(0, 0);
       const imgs = [...document.querySelectorAll('img')];
-      await Promise.all(imgs.map(i => i.complete ? null : new Promise(r => {
-        i.addEventListener('load', r); i.addEventListener('error', r);
-      })));
-      return imgs.filter(i => i.naturalWidth === 0).length;
+      const settled = await Promise.all(imgs.map(i => i.complete
+        ? Promise.resolve(true)
+        : Promise.race([
+            new Promise(r => {
+              i.addEventListener('load', () => r(true));
+              i.addEventListener('error', () => r(true));
+            }),
+            new Promise(r => setTimeout(() => r(false), waitMs)),
+          ])));
+      return {
+        broken: imgs.filter((i, n) => settled[n] && i.naturalWidth === 0).length,
+        pending: imgs.filter((i, n) => !settled[n])
+                     .map(i => i.getAttribute('src')).slice(0, 3),
+      };
     }
 """
 
@@ -319,7 +342,8 @@ def main():
 
             containers = page.evaluate(RENDERED_CONTAINERS)
             empty = [c["id"] for c in containers if c["nodes"] <= 0]
-            broken = page.evaluate(COUNT_BROKEN_IMAGES)
+            images = page.evaluate(COUNT_BROKEN_IMAGES, IMAGE_SETTLE_MS)
+            broken, pending = images["broken"], images["pending"]
 
             layout = []
             for mode in LAYOUT_MODES:
@@ -351,6 +375,11 @@ def main():
             status = []
             if broken:
                 status.append(f"{broken} broken images")
+            if pending:
+                # Not a failure: a lazy image can stay pending on a tall page.
+                # Worth saying, because it is the one thing this check did not
+                # manage to inspect.
+                print(f"     {slug} images still pending: {', '.join(pending)}")
             if empty:
                 status.append(f"empty diagrams: {','.join(empty)}")
             if bad:
