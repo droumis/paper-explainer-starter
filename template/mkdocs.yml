@@ -24,7 +24,10 @@ extra_css:
   - assets/css/distill.css
 
 extra_javascript:
-  - https://d3js.org/d3.v7.min.js
+  # d3 is vendored rather than fetched from a CDN: every diagram needs it, so a
+  # slow or dropped connection turns every page into blank boxes, and it made
+  # check-site fail intermittently for reasons that had nothing to do with the site.
+  - assets/js/lib/d3.v7.min.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
   - assets/js/lib/stats.js      # must load before diagrams.js
   - assets/js/diagrams.js
