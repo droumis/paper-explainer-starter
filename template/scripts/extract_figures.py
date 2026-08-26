@@ -37,9 +37,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_geometry import (  # noqa: E402
-    FOOTER_Y,
-    HEADER_Y,
     figure_graphics,
+    figure_text,
     panel_labels,
     prose_words,
 )
@@ -108,7 +107,7 @@ def verify_coverage(paper):
     problems = []
     for page_idx, crops in by_page(paper.figures).items():
         page = doc[page_idx]
-        graphics = list(figure_graphics(page))
+        graphics = list(figure_graphics(page, paper.header_y, paper.footer_y))
         for name, rect in crops:
             worst = None
             for grect in graphics:
@@ -165,14 +164,7 @@ def verify_figure_text(paper):
         for _, rect in crops[1:]:
             union |= rect
 
-        prose = [wrect for wrect, _ in prose_words(page)]
-        for word in page.get_text("words"):
-            wrect = fitz.Rect(word[:4])
-            text = word[4]
-            if wrect.y1 < HEADER_Y or wrect.y0 > FOOTER_Y:
-                continue                  # running head or footer
-            if any(wrect.intersects(p) for p in prose):
-                continue                  # caption or body copy, not figure text
+        for wrect, text in figure_text(page, paper.header_y, paper.footer_y):
             if not wrect.intersects(union):
                 continue                  # elsewhere on the page, not our business
             hits = [(name, rect) for name, rect in crops if rect.intersects(wrect)]

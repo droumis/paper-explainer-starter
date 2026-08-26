@@ -38,7 +38,15 @@ from pdf_geometry import (  # noqa: E402
     prose_words,
     suggest_crop,
 )
-from project import resolve_project, split_project_arg  # noqa: E402
+from project import load_bands, resolve_project, split_project_arg  # noqa: E402
+
+# Set from the project's figures.toml [page] table, so the probe reports the same
+# geometry the checks enforce rather than a second opinion.
+BANDS: dict[str, float] = {}
+
+
+def bands():
+    return BANDS.get("header_y"), BANDS.get("footer_y")
 
 
 def fmt(r):
@@ -51,7 +59,7 @@ def inventory(doc):
     print("page  graphics  panels                caption starts with")
     print("-" * 78)
     for i, page in enumerate(doc):
-        gfx = list(figure_graphics(page))
+        gfx = list(figure_graphics(page, *bands()))
         labels = [t for _, t in panel_labels(page)]
         caps = [t for _, t in caption_blocks(page)]
         if not gfx and not caps:
@@ -91,11 +99,12 @@ def detail(doc, idx):
     else:
         print("  none")
 
-    box = content_bbox(page)
+    box = content_bbox(page, *bands())
     print(f"\nFIGURE GRAPHICS UNION: {fmt(box) if box else 'none'}")
-    print(f"  ({len(list(figure_graphics(page)))} elements, clip-aware)")
+    print(f"  ({len(list(figure_graphics(page, *bands())))} elements, clip-aware)")
 
-    s, notes = suggest_crop(page)
+    s, notes = suggest_crop(page, header_y=BANDS.get('header_y'),
+                            footer_y=BANDS.get('footer_y'))
     print(f"\nSUGGESTED CROP (whole page): {fmt(s) if s else 'none'}")
     for n in notes:
         print(f"  ! {n}")
@@ -108,9 +117,10 @@ def suggest_all(doc):
     print("Candidate crop boxes. Split any page whose panels serve different")
     print("site pages, then paste into the project's figures.toml.\n")
     for i, page in enumerate(doc):
-        if not list(figure_graphics(page)):
+        if not list(figure_graphics(page, *bands())):
             continue
-        s, notes = suggest_crop(page)
+        s, notes = suggest_crop(page, header_y=BANDS.get('header_y'),
+                                footer_y=BANDS.get('footer_y'))
         if not s:
             continue
         labels = "".join(sorted({t for _, t in panel_labels(page)}))
@@ -134,9 +144,12 @@ def render(doc, out_dir, idx, zoom=2.0):
 def main():
     name, args = split_project_arg(sys.argv[1:], ("--page", "--render"))
     project = resolve_project(name)
+    BANDS.update(load_bands(project))
     pages_dir = project / "docs" / "assets" / "img" / "figures" / "pages"
     pdf = find_pdf(project)
-    print(f"PDF: {pdf.name}\n")
+    # Printed beside the PDF so the bands in force are never a silent default.
+    shown = ", ".join(f"{k}={v:.0f}" for k, v in sorted(BANDS.items())) or "defaults"
+    print(f"PDF: {pdf.name}   page bands: {shown}\n")
     doc = fitz.open(str(pdf))
 
     if "--page" in args:

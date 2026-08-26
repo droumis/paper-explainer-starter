@@ -15,6 +15,7 @@ because in a multi-paper repo the extraction script is shared and per-paper
 state cannot live inside it.
 """
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +27,12 @@ except ModuleNotFoundError:                     # pragma: no cover, py<3.11
     import tomli as tomllib
 
 FIGURES_FILE = "figures.toml"
+
+# The optional `[page]` table overrides the running-header and footer offsets in
+# pdf_geometry, per paper. A band outside the page silently turns every geometry
+# check into a no-op, so the values are bounded rather than merely non-negative.
+BAND_KEYS = ("header_y", "footer_y")
+MAX_PAGE_OFFSET = 2000.0
 
 # What marks a directory as a paper project. `mkdocs.yml` is the reliable one:
 # it exists from the moment the project is scaffolded, before any PDF or crop
@@ -132,6 +139,60 @@ def split_project_arg(argv: list[str],
     return name, rest
 
 
+def validate_bands(page_table, where: str) -> dict[str, float]:
+    """Check and convert a `[page]` table, or raise SystemExit naming the file.
+
+    One validator, used by both `load_bands` and `load_figures`. Two validators
+    disagreeing is how a probe came to accept a band that `verify-figures` then
+    rejected, by which time the bad crop boxes had already been pasted in.
+
+    Bounded and finite-checked, not merely non-negative. TOML parses bare `nan`
+    and `inf` as floats and `value < 0` catches neither, and a band outside the
+    page makes `figure_graphics` and `figure_text` return nothing at all, so the
+    coverage and figure-text checks would pass having examined no content.
+    """
+    if page_table is None:
+        return {}
+    if not isinstance(page_table, dict):
+        raise SystemExit(f"{where}: [page] must be a table")
+    extra = sorted(set(page_table) - set(BAND_KEYS))
+    if extra:
+        raise SystemExit(
+            f"{where}: [page] has unexpected key(s) {', '.join(extra)}. "
+            f"Only {' and '.join(BAND_KEYS)} are accepted."
+        )
+    bands: dict[str, float] = {}
+    for key, value in page_table.items():
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(value)
+                or not 0 < float(value) < MAX_PAGE_OFFSET):
+            raise SystemExit(
+                f"{where}: [page] {key} must be a page offset in points, "
+                f"greater than 0 and less than {MAX_PAGE_OFFSET:.0f}"
+            )
+        bands[key] = float(value)
+    return bands
+
+
+def load_bands(project: Path) -> dict[str, float]:
+    """Read the optional `[page]` band overrides from `figures.toml`.
+
+    Returns only the keys that were set, so callers leave the defaults in
+    `pdf_geometry` alone when a paper says nothing. Errors are raised rather than
+    swallowed: this is the only path `probe` takes, and a probe silently falling
+    back to the default band prints crop boxes that are wrong at the top of every
+    figure, which is exactly the output the author is told to paste in.
+    """
+    path = project / FIGURES_FILE
+    if not path.exists():
+        return {}
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"{path}: {exc}") from None
+    return validate_bands(data.get("page"), str(path))
+
+
 def load_figures(project: Path,
                  qualities: dict[str, int] | None = None,
                  ) -> dict[str, tuple[int, fitz.Rect]]:
@@ -155,12 +216,13 @@ def load_figures(project: Path,
     except tomllib.TOMLDecodeError as exc:
         raise SystemExit(f"{path}: {exc}") from None
 
-    unknown = sorted(set(data) - {"figures"})
+    unknown = sorted(set(data) - {"figures", "page"})
     if unknown:
         raise SystemExit(
             f"{path}: unexpected top-level key(s) {', '.join(unknown)}. "
-            "Crops go under [figures.<name>]."
+            "Crops go under [figures.<name>], page bands under [page]."
         )
+    validate_bands(data.get("page"), str(path))
 
     figures: dict[str, tuple[int, fitz.Rect]] = {}
     qualities = {} if qualities is None else qualities
@@ -217,6 +279,17 @@ class Paper:
     # is the default because these are data figures: hairlines, small axis text
     # and faint points are exactly what lossy compression damages.
     qualities: dict[str, int] = field(default_factory=dict)
+    # Running-header and footer offsets, from `[page]` in figures.toml. Empty
+    # means this paper accepts the defaults in pdf_geometry.
+    bands: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def header_y(self) -> float | None:
+        return self.bands.get("header_y")
+
+    @property
+    def footer_y(self) -> float | None:
+        return self.bands.get("footer_y")
 
     @property
     def docs(self) -> Path:
@@ -248,4 +321,5 @@ class Paper:
             pdf=find_pdf(project) if need_pdf else None,
             figures=figures,
             qualities=qualities,
+            bands=load_bands(project),
         )

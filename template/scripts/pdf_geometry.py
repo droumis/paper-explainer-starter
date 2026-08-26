@@ -45,12 +45,34 @@ _PUNCTUATION = "()[].,;:!?\"'`-\u2013\u2014"
 DEGENERATE_PAD = 0.5
 
 # Content above/below these page offsets is running header or footer.
+#
+# These are defaults, not truths about paper layout. A journal that starts its
+# figures higher than HEADER_Y makes the top of every figure invisible to the
+# geometry: panel letters, panel titles and legend keys are silently discarded,
+# so `verify_coverage` and `verify_figure_text` cannot see a crop that cuts them
+# off. Nature runs figures from about y=48 and needs HEADER_Y nearer 45.
+#
+# Override per paper in figures.toml, which threads the values through every
+# check:
+#
+#     [page]
+#     header_y = 45
+#
 HEADER_Y = 95.0
 FOOTER_Y = 745.0
 
 # A drawing wider than this fraction of the page is a background or a full-width
 # rule, not figure content.
 MAX_CONTENT_WIDTH_FRAC = 0.85
+
+# The same problem rotated: journals draw a hairline down the page edge or
+# between columns, and it runs the full text height. Height alone cannot
+# disqualify a drawing, because a page-filling figure legitimately has tall
+# elements, so this applies only to rules thin enough to carry no content. Left
+# in, such a rule intersects no sensible crop box and `verify_coverage` reports
+# it as figure content stranded outside every crop, on every page of the paper.
+MAX_RULE_HEIGHT_FRAC = 0.85
+MAX_RULE_THICKNESS = 2.0
 
 
 def find_pdf(root: Path) -> Path:
@@ -100,9 +122,56 @@ def prose_words(page):
             yield fitz.Rect(x0, y0, x1, y1), text
 
 
-def figure_graphics(page):
+def subpath_rects(item):
+    """Yield a rect per drawn segment of one drawing, not one for the group.
+
+    `page.get_drawings()` returns one entry per path, and a single path can hold
+    many unconnected segments: a journal figure often draws every axis line of
+    every panel as one path object. Its reported `rect` is then the union of
+    those segments, a box spanning the whole figure that is mostly empty. Used
+    as figure content it makes panels impossible to crop apart, because one
+    phantom rect straddles every boundary at once.
+
+    Falls back to the whole bounding rect when an entry reports no segments. That
+    fallback must never be reached by a transparency `group`: PyMuPDF populates
+    `items` only for non-group entries, so a group would fall through and
+    reinstate exactly the phantom union this function exists to remove. One real
+    case unioned 24 separately reported child drawings into a single 233 x 127 pt
+    rect. `figure_graphics` therefore skips groups outright, since their children
+    are reported independently.
+    """
+    segments = item.get("items") or ()
+    if not segments:
+        rect = item.get("rect")
+        if rect is not None:
+            yield fitz.Rect(rect)
+        return
+    for seg in segments:
+        op, args = seg[0], seg[1:]
+        if op == "re":
+            yield fitz.Rect(args[0])
+        elif op == "qu":
+            yield fitz.Quad(args[0]).rect
+        else:
+            # "l" is two points, "c" is four control points. A curve's control
+            # hull contains the curve, so its bounding box is a safe superset.
+            points = [p for p in args if isinstance(p, fitz.Point)]
+            if not points:
+                continue
+            # Built from coordinates rather than by unioning per-point rects,
+            # because `Rect.__or__` ignores an empty operand: a rect grown from
+            # single points stays a point, so every straight segment on the page
+            # would vanish and the coverage checks would silently pass.
+            yield fitz.Rect(min(p.x for p in points), min(p.y for p in points),
+                            max(p.x for p in points), max(p.y for p in points))
+
+
+def figure_graphics(page, header_y=None, footer_y=None):
     """Yield rects of drawings and images that are plausibly figure content."""
+    header_y = HEADER_Y if header_y is None else header_y
+    footer_y = FOOTER_Y if footer_y is None else footer_y
     page_width = page.rect.width
+    page_height = page.rect.height
     clip_stack = []
     for item in page.get_drawings(extended=True):
         level = item.get("level", 0)
@@ -113,25 +182,79 @@ def figure_graphics(page):
             if scissor is not None:
                 clip_stack.append((level, fitz.Rect(scissor)))
             continue
-        rect = item.get("rect")
-        if rect is None:
+        # A transparency group carries no `items`, and its children are reported
+        # separately, so honouring it would re-add one rect spanning every child.
+        # Skipped for the same reason as a clip.
+        if item["type"] == "group":
             continue
-        rect = fitz.Rect(rect)
-        for _, scissor in clip_stack:
-            rect.intersect(scissor)
-        if rect.width <= 0 and rect.height <= 0:
-            continue                      # a single point protects nothing
-        if rect.width <= 0:
-            rect.x1 += DEGENERATE_PAD
-        if rect.height <= 0:
-            rect.y1 += DEGENERATE_PAD
-        if rect.width > MAX_CONTENT_WIDTH_FRAC * page_width:
+        if item.get("rect") is None:
             continue
-        if rect.y1 < HEADER_Y or rect.y0 > FOOTER_Y:
-            continue
-        yield rect
+        for rect in subpath_rects(item):
+            rect = fitz.Rect(rect)
+            # Clamp per axis rather than calling `Rect.intersect`, for two
+            # reasons. `intersect` is documented as a no-op on an empty rect, and
+            # a horizontal or vertical segment is empty in one dimension, so it
+            # would escape its scissor entirely. And padding before intersecting
+            # pushes a segment sitting exactly on the scissor's far edge past it,
+            # after which the intersection collapses and the segment is lost:
+            # real 13.7 pt axis lines disappeared that way. Clamp first, pad
+            # after, and both problems go away.
+            for _, scissor in clip_stack:
+                rect.x0 = max(rect.x0, scissor.x0)
+                rect.y0 = max(rect.y0, scissor.y0)
+                rect.x1 = min(rect.x1, scissor.x1)
+                rect.y1 = min(rect.y1, scissor.y1)
+            if rect.x1 < rect.x0 or rect.y1 < rect.y0:
+                continue                  # wholly outside its clip
+            if rect.x1 == rect.x0 and rect.y1 == rect.y0:
+                continue                  # a single point protects nothing
+            if rect.x1 == rect.x0:
+                rect.x1 += DEGENERATE_PAD
+            if rect.y1 == rect.y0:
+                rect.y1 += DEGENERATE_PAD
+            if rect.width > MAX_CONTENT_WIDTH_FRAC * page_width:
+                continue
+            if (rect.width <= MAX_RULE_THICKNESS
+                    and rect.height > MAX_RULE_HEIGHT_FRAC * page_height):
+                continue
+            if rect.y1 < header_y or rect.y0 > footer_y:
+                continue
+            yield rect
     for info in page.get_image_info():
         yield fitz.Rect(*info["bbox"])
+
+
+def figure_text(page, header_y=None, footer_y=None):
+    """Yield (rect, text) for the figure's own text: axis and panel labels.
+
+    Everything inside the body bands that is not part of a prose block. Shared by
+    the crop suggester and the figure-text check so the two cannot disagree about
+    what counts as a label.
+
+    A word merely intersecting the bands counts here, matching the figure-text
+    check. `suggest_crop` wants the stricter rule and calls
+    `figure_text_contained`, because a running head straddling the boundary would
+    otherwise drag a suggested box up out of the figure.
+    """
+    header_y = HEADER_Y if header_y is None else header_y
+    footer_y = FOOTER_Y if footer_y is None else footer_y
+    prose = [r for r, _ in prose_words(page)]
+    for word in page.get_text("words"):
+        rect = fitz.Rect(word[:4])
+        if rect.y1 < header_y or rect.y0 > footer_y:
+            continue
+        if any(rect.intersects(p) for p in prose):
+            continue
+        yield rect, word[4]
+
+
+def figure_text_contained(page, header_y=None, footer_y=None):
+    """`figure_text`, but only words lying wholly inside the body bands."""
+    header_y = HEADER_Y if header_y is None else header_y
+    footer_y = FOOTER_Y if footer_y is None else footer_y
+    for rect, text in figure_text(page, header_y, footer_y):
+        if rect.y0 >= header_y and rect.y1 <= footer_y:
+            yield rect, text
 
 
 def panel_labels(page):
@@ -162,9 +285,9 @@ def caption_blocks(page):
             yield fitz.Rect(block[0], block[1], block[2], block[3]), text[:90]
 
 
-def content_bbox(page):
+def content_bbox(page, header_y=None, footer_y=None):
     """Union of figure graphics on a page, or None if there are none."""
-    rects = list(figure_graphics(page))
+    rects = list(figure_graphics(page, header_y, footer_y))
     if not rects:
         return None
     box = fitz.Rect(rects[0])
@@ -173,7 +296,7 @@ def content_bbox(page):
     return box
 
 
-def suggest_crop(page, y0=None, y1=None, pad=3.0):
+def suggest_crop(page, y0=None, y1=None, pad=3.0, header_y=None, footer_y=None):
     """Propose a crop box for a page, optionally limited to a vertical band.
 
     Unions the figure graphics AND the panel labels, because a panel letter is
@@ -191,7 +314,8 @@ def suggest_crop(page, y0=None, y1=None, pad=3.0):
     lo = y0 if y0 is not None else 0.0
     hi = y1 if y1 is not None else page.rect.height
 
-    parts = [r for r in figure_graphics(page) if r.y0 >= lo - 1 and r.y1 <= hi + 1]
+    parts = [r for r in figure_graphics(page, header_y, footer_y)
+             if r.y0 >= lo - 1 and r.y1 <= hi + 1]
     parts += [r for r, _ in panel_labels(page) if r.y0 >= lo - 1 and r.y1 <= hi + 1]
     if not parts:
         return None, []
@@ -205,15 +329,13 @@ def suggest_crop(page, y0=None, y1=None, pad=3.0):
     # intersects counts, so a section heading elsewhere on the page cannot drag
     # the box into the body column. Growing can touch new words, so iterate to
     # a fixed point under a cap.
-    prose = [r for r, _ in prose_words(page)]
-    figure_text = [
-        fitz.Rect(w[:4]) for w in page.get_text("words")
-        if HEADER_Y <= w[1] and w[3] <= FOOTER_Y
-        and not any(fitz.Rect(w[:4]).intersects(p) for p in prose)
-    ]
+    # The strict containment rule, matching the behaviour this function had before
+    # the bands became per-paper: a word straddling a band boundary must not drag
+    # the suggested box out of the figure.
+    labels = [r for r, _ in figure_text_contained(page, header_y, footer_y)]
     for _ in range(8):
         grown = fitz.Rect(content)
-        for wrect in figure_text:
+        for wrect in labels:
             if content.intersects(wrect):
                 grown |= wrect
         if grown == content:

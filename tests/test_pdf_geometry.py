@@ -51,6 +51,37 @@ TICKS_BASELINE = 405.0
 EDGE_LABEL = "RSPd"
 EDGE_X0 = 360.0
 
+# The page-edge hairline rule, left of everything else on the page.
+PAGE_RULE_X = 34.0
+
+# A clipped path whose second segment lies wholly OUTSIDE the clip, to the left of
+# it. Intersecting that segment yields an inverted rect rather than an empty one,
+# which reads as real content at coordinates that appear nowhere on the page.
+# Kept clear of the body column so it tests only the inversion.
+OUTSIDE_SEG_X = (120.0, 170.0)
+OUTSIDE_SEG_Y = CLIP_BAND_BOTTOM - CLIP_BAND_H / 2
+
+# A zero-thickness segment lying exactly ON its clip's far edge. Padding before
+# clipping pushes it past the scissor, the intersection then collapses, and the
+# segment is lost. Real 13.7 pt axis lines disappeared this way, so the clip has
+# to be applied by clamping and the padding has to come after.
+EDGE_SEG_X = CLIP_X0 + CLIP_VISIBLE_W          # exactly scissor.x1
+EDGE_SEG_Y = (CLIP_BAND_BOTTOM - CLIP_BAND_H + 8, CLIP_BAND_BOTTOM - 8)
+
+# Stand-in for a transparency group entry: PyMuPDF reports no `items` for one, so
+# `subpath_rects` falls back to the whole bounding rect. That is why
+# `figure_graphics` has to skip groups outright rather than rely on the fallback.
+GROUP_LIKE = {"type": "group", "rect": fitz.Rect(96, 150, 232, 250), "level": 0}
+
+# Two axis lines belonging to different panels, drawn as ONE path. The path's
+# reported rect spans both, so it covers GROUP_GAP_X, where there is no ink.
+# Journals really do emit figures this way, and the phantom rect straddles every
+# panel boundary at once, which makes a figure impossible to split by panel.
+GROUP_Y = 275.0
+GROUP_LEFT = (95.0, 150.0)
+GROUP_RIGHT = (300.0, 360.0)
+GROUP_GAP_X = 225.0
+
 
 def build_fixture(path: Path):
     doc = fitz.open()
@@ -60,6 +91,12 @@ def build_fixture(path: Path):
     page.insert_text((60, 40), "JOURNAL NAME  Vol 1", fontsize=8)
     page.insert_text((60, 770), "114  Neuron 90, 113-127", fontsize=8)
 
+    # A hairline rule down the page edge, running the full text height. Journals
+    # draw these on every page, figure pages included. Counted as figure
+    # content it sits in no crop box, so `verify_coverage` reports stranded
+    # content that no crop can legitimately capture.
+    page.draw_line(fitz.Point(PAGE_RULE_X, 28), fitz.Point(PAGE_RULE_X, PAGE_H - 40))
+
     # Figure content: a filled rect, an axis line (zero height), a tick (zero
     # width), and an embedded-style shape.
     page.draw_rect(fitz.Rect(90, 140, 240, 260), color=(0, 0, 0), fill=(0.8, 0.85, 1))
@@ -67,16 +104,40 @@ def build_fixture(path: Path):
     page.draw_line(fitz.Point(120, 300), fitz.Point(120, 340))         # zero width
     page.draw_rect(fitz.Rect(260, 150, 370, 410), color=(0, 0, 0))
 
+    # Two panels' axis lines committed as a single path, so PyMuPDF reports one
+    # rect spanning the gap between them.
+    shape = page.new_shape()
+    shape.draw_line(fitz.Point(GROUP_LEFT[0], GROUP_Y),
+                    fitz.Point(GROUP_LEFT[1], GROUP_Y))
+    shape.draw_line(fitz.Point(GROUP_RIGHT[0], GROUP_Y),
+                    fitz.Point(GROUP_RIGHT[1], GROUP_Y))
+    shape.finish(color=(0, 0, 0), width=0.5)
+    shape.commit()
+
     # A genuinely clipped path: the fill spans x 200..560, reaching into the body
     # column, but the clip stops it at x=360. Naive geometry reports the fill's
     # own rect and concludes the figure covers the text column. Nothing in the
     # PyMuPDF drawing API emits a clip, so write the operators directly.
     # PDF space is bottom-up, so y_pdf = PAGE_H - y_top.
+    # The same clip also carries a two-segment stroked path whose second segment
+    # is entirely outside the scissor, which is what produces an inverted rect.
     y_pdf = PAGE_H - CLIP_BAND_BOTTOM
+    seg_y = PAGE_H - OUTSIDE_SEG_Y
+    e0, e1 = PAGE_H - EDGE_SEG_Y[0], PAGE_H - EDGE_SEG_Y[1]
     ops = (f"\nq {CLIP_X0} {y_pdf} {CLIP_VISIBLE_W} {CLIP_BAND_H} re W n\n"
-           f"1 0.94 0 rg {CLIP_X0} {y_pdf} {CLIP_FILL_W} {CLIP_BAND_H} re f\nQ\n")
+           f"1 0.94 0 rg {CLIP_X0} {y_pdf} {CLIP_FILL_W} {CLIP_BAND_H} re f\n"
+           f"0 0 0 RG 0.5 w {CLIP_X0 + 10} {seg_y} m {CLIP_X0 + 60} {seg_y} l\n"
+           f"{OUTSIDE_SEG_X[0]} {seg_y} m {OUTSIDE_SEG_X[1]} {seg_y} l S\n"
+           # A vertical segment sitting exactly on the scissor's right edge.
+           f"{EDGE_SEG_X} {e0} m {EDGE_SEG_X} {e1} l S\nQ\n")
     xref = page.get_contents()[0]
     doc.update_stream(xref, doc.xref_stream(xref) + ops.encode())
+
+    # A transparency group would belong here, but emitting one needs an ExtGState
+    # resource that this fixture has no clean way to add, and a half-written one
+    # produces MuPDF syntax errors rather than a `group` entry. The group guard is
+    # covered instead by `check_subpath_fallback` below plus verification against
+    # real papers, which do contain groups.
 
     # Panel labels: single capitals, part of the figure.
     page.insert_text(PANEL_A, "A", fontsize=11)
@@ -196,6 +257,41 @@ def check_project_module():
         ok, msg = expect_exit(lambda: P.load_figures(proj), "1 to 100")
         passed.append(check("a quality outside 1 to 100 is rejected", ok, msg))
 
+        # The optional [page] band overrides. These gate every geometry check, so
+        # a value that silently disables them is worse than a rejected one.
+        good = "[page]\nheader_y = 45\n[figures.f]\npage = 2\nbox = [1, 2, 3, 4]\n"
+        (proj / "figures.toml").write_text(good)
+        passed.append(check("a valid [page] header_y is read",
+                            P.load_bands(proj) == {"header_y": 45.0},
+                            f"got {P.load_bands(proj)}"))
+        passed.append(check("[page] does not make load_figures reject the file",
+                            set(P.load_figures(proj)) == {"f"}))
+
+        for bad_value, label in (("nan", "nan"), ("inf", "inf"), ("-5", "negative"),
+                                 ("0", "zero"), ("10000", "off the page"),
+                                 ('"45"', "a string")):
+            (proj / "figures.toml").write_text(f"[page]\nheader_y = {bad_value}\n")
+            ok_f, msg_f = expect_exit(lambda: P.load_figures(proj), "header_y")
+            ok_b, msg_b = expect_exit(lambda: P.load_bands(proj), "header_y")
+            passed.append(check(
+                f"[page] header_y = {label} is rejected by both loaders",
+                ok_f and ok_b,
+                f"load_figures: {msg_f} / load_bands: {msg_b}; a band outside the "
+                "page makes every geometry check pass having examined nothing"))
+
+        (proj / "figures.toml").write_text("[page]\nheaderY = 45\n")
+        ok_f, msg_f = expect_exit(lambda: P.load_figures(proj), "headerY")
+        ok_b, msg_b = expect_exit(lambda: P.load_bands(proj), "headerY")
+        passed.append(check("a misspelled [page] key is rejected by both loaders",
+                            ok_f and ok_b,
+                            f"load_figures: {msg_f} / load_bands: {msg_b}; the probe "
+                            "reads load_bands only, and would use the wrong band"))
+
+        (proj / "figures.toml").write_text("[page]\nheader_y = 45\nbroken =\n")
+        ok_b, msg_b = expect_exit(lambda: P.load_bands(proj), "figures.toml")
+        passed.append(check("load_bands reports malformed TOML instead of "
+                            "defaulting silently", ok_b, msg_b))
+
         # Every bad entry at once, so filling this in is one edit-and-rerun.
         (proj / "figures.toml").write_text(
             "[figures.a]\npage = 2\nbox = [1, 2]\n"
@@ -302,6 +398,54 @@ def main():
                         all(r.y1 >= G.HEADER_Y for r in gfx)))
     passed.append(check("ignores the footer",
                         all(r.y0 <= G.FOOTER_Y for r in gfx)))
+    passed.append(check(
+        "ignores the full-height page rule",
+        not any(r.x1 <= PAGE_RULE_X + 1 for r in gfx),
+        "a page-edge hairline counted as figure content is stranded outside "
+        "every crop box, on every page"))
+    passed.append(check(
+        "but keeps a tall element that is not a hairline",
+        any(r.height > 200 for r in gfx),
+        "the height filter must not disqualify real panels"))
+    # Why groups must be skipped rather than handled by the fallback: an entry
+    # with no `items` yields its whole bounding rect, and for a group that rect is
+    # the union over every child, each of which is reported separately anyway.
+    fallback = list(G.subpath_rects(GROUP_LIKE))
+    passed.append(check(
+        "an entry with no segments falls back to its whole bounding rect",
+        fallback == [GROUP_LIKE["rect"]],
+        f"got {fallback}; this is why figure_graphics skips type == 'group'"))
+
+    gap = fitz.Point(GROUP_GAP_X, GROUP_Y)
+    passed.append(check(
+        "a multi-segment path is reported per segment, not as one union rect",
+        not any(r.contains(gap) for r in gfx),
+        "a path holding two panels' axis lines claims the empty space between "
+        "them, which straddles every panel boundary and blocks splitting"))
+    edge = [r for r in gfx
+            if abs(r.x0 - EDGE_SEG_X) < 1 and r.y0 <= EDGE_SEG_Y[0] + 1
+            and r.y1 >= EDGE_SEG_Y[1] - 1]
+    passed.append(check(
+        "a degenerate segment lying on its clip's far edge survives",
+        bool(edge),
+        "padding before clipping pushes such a segment past the scissor, the "
+        "intersection then collapses, and a real axis line vanishes; clamp to "
+        "the clip first and pad afterwards"))
+
+    gone = fitz.Point(sum(OUTSIDE_SEG_X) / 2, OUTSIDE_SEG_Y)
+    passed.append(check(
+        "a segment clipped entirely away is dropped, not inverted",
+        all(r.x1 >= r.x0 and r.y1 >= r.y0 for r in gfx)
+        and not any(r.contains(gone) for r in gfx),
+        "intersecting a segment that lies outside its clip gives x1 < x0, and "
+        "Rect.width reports the absolute difference, so it survives every size "
+        "filter and is reported as stranded content at impossible coordinates"))
+    passed.append(check(
+        "both segments of that path survive",
+        any(abs(r.x1 - GROUP_LEFT[1]) < 1 for r in gfx)
+        and any(abs(r.x0 - GROUP_RIGHT[0]) < 1 for r in gfx),
+        "per-segment rects must not be dropped; Rect.__or__ ignores empty "
+        "operands, so unioning point rects silently loses every line"))
     zero_h = [r for r in gfx if abs(r.y1 - r.y0 - G.DEGENERATE_PAD) < 1e-6]
     passed.append(check("keeps the zero-height axis line, padded",
                         len(zero_h) > 0))
