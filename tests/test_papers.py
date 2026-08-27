@@ -40,7 +40,22 @@ def build_repo(root: Path):
     (root / "template" / "docs" / "index.md").write_text("# x\n")
     (root / "template" / "mkdocs.yml").write_text("site_name: x\n")
     (root / "template" / "figures.toml").write_text("# none\n")
+    # scripts/ is what marks template/ as the scaffold source rather than a paper.
+    (root / "template" / "scripts").mkdir()
+    (root / "template" / "scripts" / "papers.py").write_text("# machinery\n")
+    (root / "template" / "pixi.toml").write_text("[project]\nname = 'x'\n")
+    (root / "template" / "pixi.lock").write_text("# lock\n")
+    (root / "template" / ".gitignore").write_text(".pixi/\nsite/\ndist/\n")
+    # The starter's own, carrying the marker init looks for.
+    (root / ".gitignore").write_text(
+        "# template/ is the source of truth\n"
+        "/docs/\n/scripts\n/mkdocs.yml\n/pixi.toml\n/pixi.lock\n")
     (root / "PAPER.md").write_text("# brief\n")
+    point_at(root)
+
+
+def point_at(root: Path):
+    """Aim the module at a repo that build_repo already created."""
     papers.ROOT = root
     papers.TEMPLATE = root / "template"
 
@@ -140,6 +155,55 @@ def main():
             except SystemExit as exc:
                 passed.append(check("new-paper refuses to overwrite a paper",
                                     "Refusing to overwrite" in str(exc), str(exc)))
+            # A mono root's entry points are pixi.toml, pixi.lock and the
+            # scripts symlink, and init creates all three. Inheriting the
+            # starter's .gitignore, which anchors exactly those paths, produced a
+            # repo that could not be built from a clone and a CI failure on a
+            # missing manifest. Both layouts must end up with a .gitignore that
+            # does not hide what init just wrote.
+            for layout in ([], ["--mono"]):
+                label = "--mono" if layout else "one paper"
+                with tempfile.TemporaryDirectory() as d2:
+                    fresh = Path(d2)
+                    build_repo(fresh)
+                    papers.cmd_init(layout)
+                    text = (fresh / ".gitignore").read_text()
+                    hidden = [f for f in ("pixi.toml", "pixi.lock", "scripts")
+                              if f"/{f}" in text]
+                    passed.append(check(
+                        f"init ({label}) leaves the entry points trackable",
+                        not hidden, f"still ignored: {hidden}"))
+                    passed.append(check(
+                        f"init ({label}) still ignores build output",
+                        "site/" in text and "dist/" in text))
+                point_at(root)  # later checks operate on the outer repo again
+
+            # An existing mono root predates that fix, so update repairs it. The
+            # starter itself must be left alone: there, the anchors are correct.
+            with tempfile.TemporaryDirectory() as d3:
+                fresh = Path(d3)
+                build_repo(fresh)
+                papers.cmd_init(["--mono"])
+                (fresh / ".gitignore").write_text(
+                    "# template/ is the source of truth\n/pixi.toml\n/scripts\n")
+                # A paper directory, written directly: cmd_new resolves against
+                # the working directory, and this check is about ROOT.
+                (fresh / "paper-a").mkdir()
+                (fresh / "paper-a" / "mkdocs.yml").write_text("site_name: a\n")
+                papers.cmd_update([])
+                passed.append(check(
+                    "update repairs a root that still ignores its entry points",
+                    "/pixi.toml" not in (fresh / ".gitignore").read_text(),
+                    (fresh / ".gitignore").read_text()))
+            with tempfile.TemporaryDirectory() as d4:
+                fresh = Path(d4)
+                build_repo(fresh)  # no paper directories: this is the starter
+                keep = (fresh / ".gitignore").read_text()
+                papers.cmd_update([])
+                passed.append(check(
+                    "update leaves the starter's own .gitignore alone",
+                    (fresh / ".gitignore").read_text() == keep))
+            point_at(root)
         finally:
             os.chdir(cwd)
 

@@ -21,6 +21,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A repo whose root manifest is untracked checks out without one, and
+      # setup-pixi then warns, silently falls back, and fails later somewhere
+      # confusing. These are the entry points every task needs, so say so here.
+      - name: Checkout is self-sufficient
+        run: |
+          missing=
+          for f in pixi.toml pixi.lock scripts; do
+            [ -e "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not in this checkout:$missing. These are the repo's"\
+                 "entry points, not build output. A .gitignore inherited from the"\
+                 "starter anchors /pixi.toml, /pixi.lock and /scripts; run"\
+                 "\`pixi run update\` to replace it, then commit the three paths."
+            exit 1
+          fi
+
       - uses: prefix-dev/setup-pixi@v0
         with:
           cache: true

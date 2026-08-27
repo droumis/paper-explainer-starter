@@ -92,13 +92,19 @@ SITE_WORKFLOW = ".github/workflows/site.yml"
 
 
 def install_gitignore():
-    """Give a single-paper project a .gitignore that does not hide it.
+    """Give an instantiated project a .gitignore that does not hide it.
 
     A clone arrives with the starter's, which anchors docs/, scripts/, mkdocs.yml
     and figures.toml at the root because there they are generated. In an
     instantiated project those are the project, so nothing could be committed and
-    nothing said why. A multi-paper root keeps the starter's file, where those
-    anchors are correct and each paper's own docs/ is tracked.
+    nothing said why.
+
+    Both layouts need this. A multi-paper root does not have a root docs/ or
+    mkdocs.yml, so those anchors look harmless, but `/pixi.toml`, `/pixi.lock`
+    and `/scripts` are anchored too, and a mono root is exactly where init
+    creates all three. Keeping the starter's file there means init writes the
+    repo's entry points and then git refuses to track them, so the repo cannot
+    be built from a fresh clone and CI fails on a missing manifest.
     """
     src, dest = TEMPLATE / ".gitignore", ROOT / ".gitignore"
     if not src.exists():
@@ -149,15 +155,14 @@ def cmd_init(args):
     print(f"initialising {ROOT} for "
           + ("several papers" if mono else "one paper"))
     install_site_workflow()
-    if not mono:
-        # A multi-paper root keeps the starter's .gitignore, where the root-level
-        # anchors are correct and each paper's own docs/ is still tracked.
-        install_gitignore()
+    install_gitignore()
     if mono:
         for name in MONO_FILES:
             src = TEMPLATE / name
             if src.exists():
                 copy_into(src, ROOT / name)
+        # Commit these. They are the root's entry points, not build output: a
+        # clone without them cannot run a single task.
         link = ROOT / "scripts"
         if link.exists() or link.is_symlink():
             print("  kept scripts (already here)")
@@ -186,6 +191,15 @@ def cmd_update(args):
     """
     require_template()
     print(f"refreshing machinery in {ROOT} from template/")
+    # Repair a root created before init learned to replace this file. Guarded on
+    # there being papers here, so running update inside the starter itself, where
+    # the anchored entries are correct, leaves its .gitignore alone.
+    ignore = ROOT / ".gitignore"
+    if (candidate_projects(ROOT)
+            and ignore.exists()
+            and STARTER_GITIGNORE_MARK in ignore.read_text()):
+        install_gitignore()
+        print("    (git add pixi.toml pixi.lock scripts: they were being ignored)")
     for name in MONO_FILES:
         src = TEMPLATE / name
         if src.exists() and (ROOT / name).exists():
