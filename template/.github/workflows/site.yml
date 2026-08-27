@@ -97,14 +97,21 @@ jobs:
             fi
           done
 
+      # A repo that grows one paper at a time always has a scaffold in it, whose
+      # figures.toml is still the commented example. Failing on that keeps CI red
+      # for weeks and teaches everyone to ignore it, so skip those papers, out
+      # loud. verify-figures itself stays strict: an empty figures.toml in a paper
+      # you believe you configured is a real error.
       - name: Figure crops verify
         run: |
           for p in ${{ steps.papers.outputs.list }}; do
-            if ls "$p"/*.pdf >/dev/null 2>&1; then
+            if ! ls "$p"/*.pdf >/dev/null 2>&1; then
+              echo "No PDF in $p, skipping figure checks."
+            elif ! pixi run python -c "import tomllib,sys; sys.exit(0 if tomllib.load(open('$p/figures.toml','rb')).get('figures') else 1)"; then
+              echo "::notice::$p defines no crops yet, skipping its figure checks."
+            else
               pixi run verify-figures "$p"
               pixi run check-refs "$p"
-            else
-              echo "No PDF in $p, skipping figure checks."
             fi
           done
 
