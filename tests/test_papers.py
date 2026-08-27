@@ -64,6 +64,48 @@ def stats_of(project: Path) -> str:
     return (project / "docs/assets/js/lib/stats.js").read_text()
 
 
+def check_workflow_shell(check) -> list:
+    """Every `run:` block must be valid bash once the paper list is substituted.
+
+    The list is interpolated into the shell verbatim, so a multi-line value turns
+    `for p in ${{ ... }}` into a syntax error. That shipped, and it only showed up
+    in a repo with more than one paper, because one paper is one line.
+    """
+    import re
+    import subprocess
+    import yaml
+
+    passed = []
+    for wf in sorted((ROOT / "template" / ".github" / "workflows").glob("*.yml")):
+        spec = yaml.safe_load(wf.read_text())
+        for job in spec.get("jobs", {}).values():
+            for step in job.get("steps", []):
+                script = step.get("run")
+                if not script:
+                    continue
+                # Two papers, which is what breaks a newline-separated list.
+                filled = re.sub(r"\$\{\{[^}]*\}\}", "paper-a paper-b", script)
+                r = subprocess.run(["bash", "-n"], input=filled,
+                                   capture_output=True, text=True)
+                passed.append(check(
+                    f"{wf.name}: `{step.get('name', 'run')}` is valid shell",
+                    r.returncode == 0, r.stderr.strip()))
+
+        # The consumer check above cannot see the bug that shipped: substituting a
+        # value of its own choosing hides the fact that the producer emitted a
+        # multi-line one. So check the producer. Any output that a `for ... in`
+        # interpolates has to be written on a single line.
+        text = wf.read_text()
+        looped = set(re.findall(
+            r"for\s+\w+\s+in\s+\$\{\{\s*steps\.\w+\.outputs\.(\w+)", text))
+        heredoc = set(re.findall(r'echo\s+"(\w+)<<', text))
+        both = sorted(looped & heredoc)
+        passed.append(check(
+            f"{wf.name}: outputs used in a for loop are single-line",
+            not both, f"multi-line and looped over: {both}"))
+    return passed
+
+
 def main():
     passed = []
 
@@ -206,6 +248,8 @@ def main():
             point_at(root)
         finally:
             os.chdir(cwd)
+
+    passed += check_workflow_shell(check)
 
     print(f"\n{sum(passed)}/{len(passed)} checks passed")
     return 0 if all(passed) else 1

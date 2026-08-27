@@ -61,9 +61,11 @@ jobs:
             echo "::error::No mkdocs.yml found at the root or one level down"
             exit 1
           fi
-          echo "list<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$papers" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          # One line. This value is interpolated straight into the shell of every
+          # step below, so a multi-line list becomes `for p in a<newline>b`, which
+          # is a syntax error. One paper per repo never hit it; five papers broke
+          # every step.
+          echo "list=$(echo "$papers" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
           echo "papers:"; echo "$papers"
 
       - name: JavaScript syntax
