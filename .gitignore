@@ -12,6 +12,7 @@
 # Build output and scratch, at any depth, so per-paper directories are covered.
 site/
 screenshots/
+.playwright-mcp/
 dist/
 **/docs/assets/img/figures/pages/
 __pycache__/

@@ -1,2 +1,0 @@
-[     368ms] [LOG] Enabled live reload @ http://127.0.0.1:8022/glm/:900
-[  998554ms] [ERROR] Failed to load resource: net::ERR_NETWORK_IO_SUSPENDED @ http://127.0.0.1:8022/livereload/2504717596/2504780676:0

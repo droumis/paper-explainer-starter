@@ -3,6 +3,7 @@
 .pixi/
 site/
 screenshots/
+.playwright-mcp/
 dist/
 __pycache__/
 *.pyc
