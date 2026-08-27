@@ -424,24 +424,58 @@ every command.
 
 .gitignore should include:
 ```
+.pixi/
 site/
 __pycache__/
 *.pyc
 .DS_Store
 .env
-*.pdf
 screenshots/
-docs/assets/img/figures/pages/
-.claude/
+**/docs/assets/img/figures/pages/
 ```
 
-The `pages/` directory (full-page renders for figure verification) and `screenshots/` (Playwright verification) are development artifacts — don't commit them.
+The `pages/` directory (full-page renders for figure verification) and
+`screenshots/` (Playwright verification) are development artifacts, so don't commit
+them. `*.pdf` belongs there only in a public repo. In a private one, commit each
+paper's PDF beside its site, because `probe` and `extract-figures` need the exact
+file the crop boxes were measured against, and a stale `*.pdf` rule silently drops
+the next paper's PDF from a `git add`.
+
+### The repo has to contain itself
+
+`pixi.toml`, `pixi.lock` and `scripts` (a symlink to `template/scripts` in the
+multi-paper layout) are entry points, not build output. A repo that ignores them
+looks fine on the machine that created them and cannot run a single task anywhere
+else. The starter's own `.gitignore` anchors exactly those three paths, because
+there they *are* generated, so a repo built on top of the starter must not inherit
+it: `pixi run update` replaces it and prints what to `git add`.
+
+Do not verify this by reading `.gitignore`. Clone the repo somewhere else, run
+`pixi install`, and run a real task:
+
+```bash
+git clone <url> /tmp/clonetest && cd /tmp/clonetest
+pixi install && pixi run verify-figures <paper> && pixi run build <paper>
+```
+
+CI is the same check with worse error messages. When `setup-pixi` says
+`Could not find any manifest file`, the repo is missing its own manifest; nothing
+is wrong with the runner.
 
 ## Git workflow
 
 - Make commits at logical boundaries: project setup, each page, each interactive diagram.
 - Commit messages: short imperative, no fluff, no co-author attribution.
 - Don't bundle unrelated changes.
+
+### An installed copy of the machinery needs a refresh path
+
+`init` copies `.github/workflows/site.yml` into the project and refuses to
+overwrite it afterwards, which is right at init time and wrong forever after: a CI
+fix pushed upstream cannot reach a repo that already has a copy. `pixi run update`
+now refreshes it. The same trap applies to anything else `init` copies rather than
+links, so when a fix does not seem to take effect, check whether the file that runs
+is the copy or the template.
 
 ### Confirm you are checking the right site
 
@@ -450,6 +484,16 @@ The `pages/` directory (full-page renders for figure verification) and `screensh
 `mkdocs serve` from another project answering on port 8000 makes every page of
 the current project 404, which reads as a catastrophic site bug and is nothing
 of the kind. Use `--port N` when running more than one project at once.
+
+Two servers can hold one port without either failing to start. A `mkdocs serve`
+binds `127.0.0.1` while `python -m http.server` binds `::`, and the specific bind
+wins for an IPv4 request, so the browser silently reaches the older server while
+the newer one reports success. When a page shows the wrong site, check
+`lsof -nP -iTCP:<port> -sTCP:LISTEN` before believing anything else.
+
+The port flags differ by task, because `serve` forwards to mkdocs and the checkers
+do not: `pixi run serve <paper> -a 127.0.0.1:8022`, but
+`pixi run check-site <paper> --port 8022`.
 
 ## Quality checks before done
 
@@ -474,6 +518,24 @@ of the kind. Use `--port N` when running more than one project at once.
 - [ ] Every equation has an interactive breakdown connecting symbols to visuals
 - [ ] Maze/track diagrams match the actual paper figures
 - [ ] A general undergrad can follow page 1 through the final page without external references
+
+### Label clearance under about 8px is a coincidence, not a layout
+
+`check_site.py` measures rendered text boxes, and rendered text is font-dependent.
+macOS and a Linux CI runner do not resolve the same fallback font, and the taller
+one turns two pixels of clearance into an overlap. A diagram can pass locally at
+every control position and fail in CI at all of them.
+
+So do not tune spacing until the check stops complaining. Ask what the gap *is*,
+and leave one that font metrics cannot close. A title bar whose baseline is at 16
+and a table header six pixels above the table body were two pixels apart; moving
+the table down twelve pixels made the gap 8, which measures the same everywhere.
+Check a suspected gap directly rather than inferring it from pass or fail:
+
+```js
+const a = t1.getBoundingClientRect(), b = t2.getBoundingClientRect();
+b.top - a.bottom   // in CSS px; divide by (svg height / viewBox height)
+```
 
 ### A panel must fill its viewBox in its initial state
 
