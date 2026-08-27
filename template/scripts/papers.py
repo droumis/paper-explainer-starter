@@ -205,6 +205,16 @@ def cmd_update(args):
         if src.exists() and (ROOT / name).exists():
             shutil.copy2(src, ROOT / name)
             print(f"  {name}")
+    # The installed CI workflow is machinery too. install_site_workflow refuses to
+    # overwrite, which is right at init time and wrong afterwards: without this, a
+    # CI fix pushed upstream can never reach a repo that already has a copy, and
+    # the copy keeps failing in a way the template no longer does.
+    wf_src, wf_dest = TEMPLATE / SITE_WORKFLOW, ROOT / SITE_WORKFLOW
+    if (wf_src.exists() and wf_dest.exists()
+            and wf_src.read_bytes() != wf_dest.read_bytes()):
+        shutil.copy2(wf_src, wf_dest)
+        print(f"  {SITE_WORKFLOW}"
+              "  (machinery: put repo-specific CI in another workflow file)")
     scripts = ROOT / "scripts"
     if scripts.is_dir() and not scripts.is_symlink():
         # A single-paper project owns a copy. A multi-paper root symlinks

@@ -220,6 +220,23 @@ def main():
                         "site/" in text and "dist/" in text))
                 point_at(root)  # later checks operate on the outer repo again
 
+            # A CI fix upstream is useless if it cannot reach a repo that
+            # already has a copy of the workflow, which is what init installs.
+            with tempfile.TemporaryDirectory() as d5:
+                fresh = Path(d5)
+                build_repo(fresh)
+                wf = fresh / "template" / papers.SITE_WORKFLOW
+                wf.parent.mkdir(parents=True)
+                wf.write_text("name: CI\n# v2\n")
+                papers.cmd_init(["--mono"])
+                (fresh / papers.SITE_WORKFLOW).write_text("name: CI\n# v1\n")
+                papers.cmd_update([])
+                passed.append(check(
+                    "update refreshes a stale installed CI workflow",
+                    (fresh / papers.SITE_WORKFLOW).read_text() == "name: CI\n# v2\n",
+                    (fresh / papers.SITE_WORKFLOW).read_text()))
+            point_at(root)
+
             # An existing mono root predates that fix, so update repairs it. The
             # starter itself must be left alone: there, the anchors are correct.
             with tempfile.TemporaryDirectory() as d3:
