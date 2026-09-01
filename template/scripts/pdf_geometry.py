@@ -39,6 +39,10 @@ PROSE_MIN_WIDTH = 60.0
 PROSE_MIN_WORD_LEN = 3
 _PUNCTUATION = "()[].,;:!?\"'`-\u2013\u2014"
 
+# PyMuPDF span flag bit for bold. Only `get_text("dict")` reports font weight;
+# `get_text("words")` does not, which is why panel_labels needs both.
+BOLD_FLAG = 1 << 4
+
 # Zero-thickness rects (axis lines, rules, ticks) are real figure content, but
 # intersection tests ignore empty rects. Give each degenerate axis this much
 # extent so the geometry behaves.
@@ -258,20 +262,49 @@ def figure_text_contained(page, header_y=None, footer_y=None):
 
 
 def panel_labels(page):
-    """Yield (rect, letter) for each single-capital-letter panel label.
+    """Yield (rect, letter) for each single-letter panel label.
 
-    Letters sitting inside prose are skipped, so a sentence starting with "A"
-    is not mistaken for a panel marker.
+    Two passes, because the two cases need different evidence.
+
+    Uppercase letters are taken at any font weight, which is what single-column
+    and two-column journals do. Lowercase letters are taken only when **bold**,
+    because Nature-style journals set panels as bold lowercase and plain
+    lowercase single letters are everywhere on a figure page: the English
+    article "a", axis units, and italic maths variables. Boldness is the only
+    thing separating a panel marker from an article, so a naive `islower()`
+    would report a panel "a" on essentially every page of every paper.
+
+    Letters sitting inside prose are skipped, so a sentence starting with "A" is
+    not mistaken for a panel marker, and neither is the bold letter that opens
+    each clause of a Nature caption.
     """
     prose = [r for r, _ in prose_words(page)]
+
+    def outside_prose(rect):
+        return not any(rect.intersects(p) for p in prose)
+
+    # Uppercase, from words. Unchanged behaviour: word extraction carries no
+    # font information, and every paper that passed before must still pass.
     for word in page.get_text("words"):
         x0, y0, x1, y1, text = word[0], word[1], word[2], word[3], word[4]
         if len(text) != 1 or not text.isupper() or not text.isalpha():
             continue
         rect = fitz.Rect(x0, y0, x1, y1)
-        if any(rect.intersects(p) for p in prose):
-            continue
-        yield rect, text
+        if outside_prose(rect):
+            yield rect, text
+
+    # Lowercase, from spans, which is the only extraction that reports weight.
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", ()):
+            for span in line.get("spans", ()):
+                text = span["text"].strip()
+                if len(text) != 1 or not text.isalpha() or not text.islower():
+                    continue
+                if not span["flags"] & BOLD_FLAG:
+                    continue
+                rect = fitz.Rect(span["bbox"])
+                if outside_prose(rect):
+                    yield rect, text
 
 
 def caption_blocks(page):

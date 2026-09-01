@@ -5,7 +5,7 @@ No real paper needed: `build_fixture()` fabricates a page laid out like a
 journal figure page, including the three things that make naive geometry wrong.
 Every assertion here corresponds to a bug that shipped in a real site.
 
-Run:  pixi run test-python
+Run:  pixi run --manifest-path template/pixi.toml python tests/test_pdf_geometry.py
 """
 
 import sys
@@ -27,6 +27,8 @@ PAGE_W, PAGE_H = 603, 783
 FIG_BOX = fitz.Rect(60, 110, 380, 420)
 PANEL_A = (66, 116)
 PANEL_B = (66, 280)
+PANEL_BOLD_LOWER = (200, 116)   # a bold lowercase panel letter, Nature style
+PLAIN_LOWER = (250, 170)        # a plain lowercase letter, not a panel
 CAPTION_Y = 440
 BODY_X = 400          # right column, indented clear of the figure
 
@@ -142,6 +144,16 @@ def build_fixture(path: Path):
     # Panel labels: single capitals, part of the figure.
     page.insert_text(PANEL_A, "A", fontsize=11)
     page.insert_text(PANEL_B, "B", fontsize=11)
+
+    # A Nature-style panel label: bold lowercase. Invisible to any check that
+    # only matches capitals, which is how a caption came to describe a panel
+    # that had been cropped off.
+    page.insert_text(PANEL_BOLD_LOWER, "d", fontsize=11, fontname="Helvetica-Bold")
+
+    # A plain lowercase single letter inside the figure, standing in for an axis
+    # unit or an italic maths variable. Accepting lowercase without requiring
+    # bold would report this as a panel and demand a crop contain it.
+    page.insert_text(PLAIN_LOWER, "q", fontsize=7)
 
     # An anatomical orientation marker, which looks exactly like a panel label.
     page.insert_text((330, 170), "M", fontsize=8)
@@ -359,6 +371,43 @@ def check_project_module():
     return passed
 
 
+def check_link_classifier():
+    """The link classifier in check_site, whose path arithmetic decides whether
+    a link is checkable at all.
+
+    A link that climbs above the served project root is how a link into a
+    sibling paper is written. Those resolve only in the combined `index` build,
+    so calling them broken would make the check unusable in a multi-paper repo,
+    and calling them internal would report a false 404 on every one.
+    """
+    import check_site as C
+
+    print("\nlink classification")
+    cases = [
+        ("/one/", "../two/", ("internal", "/two/", "")),
+        ("/one/", "#heading", ("internal", "/one/", "heading")),
+        ("/one/", "../assets/img/f.webp", ("internal", "/assets/img/f.webp", "")),
+        ("/", "two/", ("internal", "/two/", "")),
+        ("/a/b/", "../c/", ("internal", "/a/c/", "")),
+        ("/a/b/", "../../d/", ("internal", "/d/", "")),
+        # Escaping the project root: unverifiable from a single-project serve.
+        ("/one/", "../../other-paper/", ("escapes", "../../other-paper/", "")),
+        ("/one/", "../../other/p/#frag", ("escapes", "../../other/p/", "frag")),
+        ("/", "../other/", ("escapes", "../other/", "")),
+        ("/a/b/", "../../../e/", ("escapes", "../../../e/", "")),
+        # Other schemes are none of this check's business.
+        ("/one/", "https://example.com", ("skip", None, None)),
+        ("/one/", "mailto:a@b.c", ("skip", None, None)),
+        ("/one/", "javascript:void(0)", ("skip", None, None)),
+    ]
+    passed = []
+    for slug, href, want in cases:
+        got = C.classify_link(slug, href)
+        passed.append(check(f"{slug} + {href} -> {want[0]}", got == want,
+                            f"got {got}, expected {want}"))
+    return passed
+
+
 def main():
     tmp = ROOT / "tests" / "_fixture.pdf"
     build_fixture(tmp)
@@ -390,6 +439,22 @@ def main():
     passed.append(check("finds A and B", {"A", "B"} <= labels, f"got {labels}"))
     passed.append(check("also finds the orientation marker M, a known false "
                         "positive", "M" in labels))
+    passed.append(check(
+        "finds the bold lowercase panel label d",
+        "d" in labels,
+        f"got {labels}; Nature-style journals set panels as bold lowercase, so "
+        "matching capitals only makes every such paper's panels invisible"))
+    passed.append(check(
+        "does not treat a plain lowercase letter as a panel label",
+        "q" not in labels,
+        f"got {labels}; requiring bold is the only thing separating a panel "
+        "marker from the article 'a' and from axis units"))
+    lower_rects = [r for r, t in G.panel_labels(page) if t == "d"]
+    passed.append(check(
+        "the bold lowercase label is positioned where it was drawn",
+        lower_rects and abs(lower_rects[0].x0 - PANEL_BOLD_LOWER[0]) < 2,
+        f"got {[(round(r.x0), round(r.y0)) for r in lower_rects]}, "
+        f"expected near {PANEL_BOLD_LOWER}"))
 
     print("\nfigure graphics")
     gfx = list(G.figure_graphics(page))
@@ -578,6 +643,7 @@ def main():
                             f"lossless {a.stat().st_size}, q80 {b.stat().st_size}"))
 
     passed.extend(check_project_module())
+    passed.extend(check_link_classifier())
 
     tmp.unlink(missing_ok=True)
     print(f"\n{sum(passed)}/{len(passed)} checks passed")
