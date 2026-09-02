@@ -52,3 +52,10 @@ markdown_extensions:
 
 plugins:
   - search
+
+# A link to a heading that no longer exists is reported by mkdocs at INFO level,
+# which the warning-free build check in CI does not see. Promote it, so a
+# reworded heading fails the build instead of silently breaking every link to it.
+validation:
+  links:
+    anchors: warn

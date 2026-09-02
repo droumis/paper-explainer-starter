@@ -14,6 +14,8 @@ Discovers pages from mkdocs.yml, then for each page:
     empty data silently destroys a panel
   - counts genuinely broken images, distinguishing them from lazy images that
     simply have not loaded yet
+  - follows every internal link and heading anchor, because a reworded heading
+    silently breaks every link to it and the build reports success
   - reports console errors
 
 Usage:
@@ -240,6 +242,78 @@ CHECK_LAYOUT = """
 """
 
 
+COLLECT_LINKS = """
+() => Array.from(document.querySelectorAll('a[href]'), a => a.getAttribute('href'))
+"""
+
+# Anything mkdocs-material can legitimately point at that is not a page of this
+# project: other schemes, and the theme's own generated navigation.
+_SKIP_SCHEMES = ("http://", "https://", "mailto:", "tel:", "javascript:", "data:")
+
+
+def classify_link(slug, href):
+    """Sort one href into ('skip'|'internal'|'escapes', path, fragment).
+
+    `escapes` means the link climbs above the served project root, which is how
+    a link into a sibling paper is written. Those resolve only in the combined
+    `pixi run index` build, so a single-project run cannot check them and must
+    not fail them either. Distinguishing the two cases is the whole reason this
+    is not simply "every link must return 200".
+    """
+    if not href or href.startswith(_SKIP_SCHEMES):
+        return "skip", None, None
+    if href.startswith("#"):
+        return "internal", slug, href[1:]
+
+    path, _, frag = href.partition("#")
+    if not path:
+        return "internal", slug, frag
+
+    # Depth of the page doing the linking. "/a/" is depth 1, "/" is depth 0.
+    depth = len([p for p in slug.split("/") if p])
+    ups = 0
+    for part in path.split("/"):
+        if part == "..":
+            ups += 1
+        elif part not in ("", "."):
+            break
+    if ups > depth:
+        return "escapes", path, frag
+
+    base = slug if slug.endswith("/") else slug.rsplit("/", 1)[0] + "/"
+    parts = [p for p in base.split("/") if p]
+    for part in path.split("/"):
+        if part == "..":
+            if parts:
+                parts.pop()
+        elif part not in ("", "."):
+            parts.append(part)
+    resolved = "/" + "/".join(parts)
+    if path.endswith("/") and not resolved.endswith("/"):
+        resolved += "/"
+    return "internal", resolved, frag
+
+
+_ID_RE = re.compile(r'\bid="([^"]+)"')
+
+
+def page_anchors(ctx, base, path, cache):
+    """Element ids on one served page, fetched once and cached.
+
+    Returns None when the page itself cannot be fetched, so the caller can
+    report a broken path rather than a missing anchor.
+    """
+    if path in cache:
+        return cache[path]
+    try:
+        resp = ctx.request.get(f"{base}{path}")
+        ids = set(_ID_RE.findall(resp.text())) if resp.status < 400 else None
+    except PlaywrightError:
+        ids = None
+    cache[path] = ids
+    return ids
+
+
 RENDERED_CONTAINERS = """
     () => [...document.querySelectorAll('.vis-container')].map(c => {
       const svg = c.querySelector('svg');
@@ -307,6 +381,8 @@ def main():
         out.mkdir(exist_ok=True)
     slugs = page_slugs(project)
     failures = 0
+    anchor_cache = {}
+    cross_project = set()
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -365,6 +441,20 @@ def main():
                             f"{d['vbH']} viewBox ({int(d['fill'] * 100)}% used); "
                             f"the markup height and the JS layout have drifted")
 
+            links = []
+            for href in page.evaluate(COLLECT_LINKS):
+                kind, path, frag = classify_link(slug, href)
+                if kind == "skip":
+                    continue
+                if kind == "escapes":
+                    cross_project.add(href)
+                    continue
+                ids = page_anchors(ctx, base, path, anchor_cache)
+                if ids is None:
+                    links.append(f"dead link {href!r} -> {path} does not load")
+                elif frag and frag not in ids:
+                    links.append(f"dead anchor {href!r} -> #{frag} is not on {path}")
+
             page.evaluate(EXERCISE_CONTROLS)
             bad = page.evaluate(SCAN_BAD_GEOMETRY)
 
@@ -386,13 +476,15 @@ def main():
                 status.append(f"{len(bad)} non-finite geometry ({bad[0]})")
             if layout:
                 status.append(f"{len(layout)} layout problems")
+            if links:
+                status.append(f"{len(links)} link problems")
             if errors:
                 status.append(f"{len(errors)} console errors: {errors[0][:70]}")
 
             if status:
                 failures += 1
                 print(f"FAIL {slug:24s} {'; '.join(status)}")
-                for problem in layout:
+                for problem in layout + links:
                     print(f"       {problem}")
             else:
                 print(f"ok   {slug:24s} {len(containers)} diagrams, no errors")
@@ -400,6 +492,17 @@ def main():
         browser.close()
 
     print()
+    if cross_project:
+        # Not a failure. These climb above this project's root, so they resolve
+        # only in the combined `pixi run index` build. Naming them is the point:
+        # otherwise a link into a sibling paper is checked by nothing at all.
+        print(f"{len(cross_project)} links leave this project and were not "
+              f"checked here:")
+        for href in sorted(cross_project):
+            print(f"     {href}")
+        print("     Verify these against `pixi run index`, which builds the "
+              "sibling projects beside each other.")
+        print()
     if failures:
         print(f"{failures} of {len(slugs)} pages have problems.")
         raise SystemExit(1)
